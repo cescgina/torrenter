@@ -32,6 +32,85 @@ class Decoder:
             :return A python object representing the bencoded data
         """
         c = self._peek()
+        if c is None:
+            raise EOFError("Unexpected end-of-file")
+        elif c == TOKEN_INTEGER:
+            self._consume()
+            return self._decode_int()
+        elif c == TOKEN_LIST:
+            self._consume()
+            return self._decode_list()
+        elif c == TOKEN_DICT:
+            self._consume()
+            return self._decode_dict()
+        elif c == TOKEN_END:
+            return None
+        elif c in b'0123456789':
+            return self._decode_string()
+        else:
+            raise RuntimeError(f"Invalid token read at {self._index}")
+
+    def _peek(self):
+        """
+            Return the next character from the bencoded data or None
+        """
+        if self._index+1 >= len(self._data):
+            return None
+        return self._data[self._index:self._index + 1]
+
+    def _consume(self):
+        """
+            Read the next character from the data
+        """
+        self._index += 1
+
+    def _read(self, length: int) -> bytes:
+        """
+            Read the `length` number of bytes from data and return the result
+        """
+        if self._index + length > len(self._data):
+            raise IndexError(f"Cannot read {length} bytes from position {self._index}")
+        res = self._data[self._index:self._index+length]
+        self._index += length
+        return res
+
+    def _read_until(self, token: bytes) -> bytes:
+        """
+            Read from the bencoded data until the given token is found and
+            return the characters read
+        """
+        try:
+            occurrence = self._data.index(token, self._index)
+            result = self._data[self._index:occurrence]
+            self._index = occurrence + 1
+            return result
+        except ValueError:
+            raise RuntimeError(f"Unable to find token {token}")
+
+    def _decode_int(self):
+        return int(self._read_until(TOKEN_END))
+
+    def _decode_list(self):
+        res = []
+        # recursively decode the contents of the list
+        while self._data[self._index:self._index+1] != TOKEN_END:
+            res.append(self.decode())
+        self._consume()  # cosume end token 
+        return res
+
+    def _decode_dict(self):
+        res = OrderedDict()
+        while self._data[self._index:self._index+1] != TOKEN_END:
+            key = self.decode()
+            value = self.decode()
+            res[key] = value
+        self._consume()  # cosume end token 
+        return res
+
+    def _decode_string(self):
+        bytes_to_read = int(self._read_until(TOKEN_STRING_SEPARATOR))
+        data = self._read(bytes_to_read)
+        return data
 
 class Encoder:
     """
@@ -39,13 +118,9 @@ class Encoder:
     """
     def __init__(self, data):
         self.data = data
-        self.encoded_data = None
 
     def encode(self) -> bytes:
-        if self.encoded_data is not None:
-            return self.encoded_data
-        self.encoded_data = self._encode_data_type(self.data)
-        return self.encoded_data
+        return self._encode_data_type(self.data)
 
     def _encode_data_type(self, data):
         data_type = type(data)
