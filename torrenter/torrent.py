@@ -13,12 +13,12 @@ class Torrent:
         self._identify_files()
 
     def __str__(self):
-        filename = self.meta_info[b'info'][b'name']
-	file_len = self.meta_info[b'info'][b'length']
-	announce_url = self.meta_info[b'announce']
+        filename = self._data[b'info'][b'name']
+        file_len = self._data[b'info'][b'length']
+        announce_url = self._data[b'announce']
 
         return f"Filename: {filename}\nFile length: {file_len}\n" \
-               "Announce URL: {announce_url}\nHash: {self.info_hash}"
+                "Announce URL: {announce_url}\nHash: {self.info_hash}"
 
     def _read_torrent(self):
         with open(self.torrent_file, "rb") as f:
