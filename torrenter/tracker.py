@@ -59,6 +59,15 @@ class TrackerResponse:
 
             return [(socket.inet_ntoa(p[:4]), _decode_port(p[4:])) for p in peers]
 
+    def __bool__(self):
+        return not self.failure
+
+    def __str__(self):
+        return "incomplete: {self.incomplete}\n" \
+                "complete: {self.complete}\n" \
+                "interval: {self.interval}\n" \
+                "peers: {', '.join([x for (x, _) in self.peers])}"
+
 
 class Tracker:
     def __init__(self, torrent):
