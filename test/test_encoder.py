@@ -13,6 +13,11 @@ class TestEncoder(unittest.TestCase):
         golden = b"12:Middle Earth"
         self.assertEqual(output, golden)
 
+    def testByteStr(self):
+        output = Encoder(b"test_str").encode()
+        golden = b"8:test_str"
+        self.assertEqual(output, golden)
+
     def testList(self):
         output = Encoder(['spam', 'eggs', 123]).encode()
         golden = b"l4:spam4:eggsi123ee"

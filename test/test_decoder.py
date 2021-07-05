@@ -13,6 +13,11 @@ class TestDecoder(unittest.TestCase):
         golden = b"Middle Earth"
         self.assertEqual(output, golden)
 
+    def testByteStr(self):
+        output = Decoder(b"8:test_str").decode()
+        golden = b"test_str"
+        self.assertEqual(output, golden)
+
     def testList(self):
         output = Decoder(b"l4:spam4:eggsi123ee").decode()
         golden = [b'spam', b'eggs', 123]
