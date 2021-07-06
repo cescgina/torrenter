@@ -14,16 +14,26 @@ def main():
                         help="the .torrent to download")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="enable verbose output")
+    parser.add_argument("-l", "--log", default=None,
+                        help="Path of log file")
+
     args = parser.parse_args()
+    level_log = logging.INFO
     if args.verbose:
-        logging.basicConfig(level=logging.INFO)
+        level_log = logging.DEBUG
+
+    if args.log:
+        logging.basicConfig(filename=args.log, filemode="w",
+                level=level_log, format='%(asctime)s %(levelname)s %(message)s')
+    else:
+        logging.basicConfig(level=level_log)
 
     loop = asyncio.get_event_loop()
     client = TorrentClient(Torrent(args.torrent))
     task = loop.create_task(client.start())
 
     def signal_handler(*_):
-        logging.info("Exiting, please wait until everythin is shutdown...")
+        logging.info("Exiting, please wait until everything is shutdown...")
         client.stop()
         task.cancel()
 
