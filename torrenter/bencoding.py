@@ -139,18 +139,30 @@ class Encoder:
             # raise TypeError(f"Python object of type {data_type} cannot be encoded as benconding")
 
     def _encode_dict(self, data):
-        encoded_list = []
+        result = bytearray("d", "utf-8")
         for key, value in data.items():
-            encoded_list.append(self._encode_data_type(key).decode("utf-8"))
-            encoded_list.append(self._encode_data_type(value).decode("utf-8"))
-        return bytes(f"d{''.join(encoded_list)}e", encoding="utf-8")
+            k = self._encode_data_type(key)
+            v = self._encode_data_type(value)
+            if k and v:
+                result += k
+                result += v
+            else:
+                raise RuntimeError("Bad dict")
+        result += b"e"
+        return result
 
-    def _encode_bytes(self, value: str):
-        return bytes(f"{len(value):{value}}", encoding="utf-8")
+    def _encode_bytes(self, value: bytes):
+        result = bytearray()
+        result += str.encode(str(len(value)))
+        result += b':'
+        result += value
+        return result
 
     def _encode_list(self, data):
-        encoded_list = [self._encode_data_type(x).decode("utf-8") for x in data]
-        return bytes(f"l{''.join(encoded_list)}e", encoding="utf-8")
+        encoded_list = bytearray("l", "utf-8")
+        encoded_list += b"".join([self._encode_data_type(x) for x in data])
+        encoded_list += b"e"
+        return encoded_list
 
     def _encode_str(self, data):
         return bytes(f"{len(data)}:{data}", encoding="utf-8")
