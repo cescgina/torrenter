@@ -10,6 +10,7 @@ class Torrent:
         self._data = self._read_torrent()
         self.files = []
         self.info_hash = sha1(Encoder(self._data[b"info"]).encode()).digest()
+        self.multi_file = None
         self._identify_files()
 
     def __str__(self):
@@ -29,8 +30,10 @@ class Torrent:
         if b"files" in files:
             # multi-file torrent
             files_dict = files[b"files"]
+            self.multi_file = True
         else:
             files_dict = [files]
+            self.multi_file = False
 
         for f in files_dict:
             name = f[b"name"].decode("utf-8")
