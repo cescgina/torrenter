@@ -2,6 +2,7 @@ import asyncio
 import logging
 import struct
 from asyncio import Queue
+from typing import Optional
 from concurrent.futures import CancelledError
 
 import bitstring
@@ -59,78 +60,79 @@ class PeerConnection:
     async def _start(self):
         while 'stopped' not in self.my_state:
             ip, port = await self.queue.get()
-            logging.info(f"Got assigned peer with {ip}")
+            logging.info(f"Got assigned peer with ip {ip} and port {port}")
 
-        try:
-            #TODO: for some reason it does not seem to work to open a new
-            # connection if the first one drops (i.e. second loop)
-            self.reader, self.writer = await asyncio.open_connection(ip, port)
-            logging.info(f"Connection open to peer: {ip}")
+            try:
+                #TODO: for some reason it does not seem to work to open a new
+                # connection if the first one drops (i.e. second loop)
+                logging.debug(f"Attempting to connect to peer: {ip} using port {port}")
+                self.reader, self.writer = await asyncio.open_connection(ip, port)
+                logging.info(f"Connection open to peer: {ip} using port {port}")
 
-            # it's our respnsabilityh to initiate the handshake
-            buffer = await self._handshake()
+                # it's our responsability to initiate the handshake
+                buffer = await self._handshake()
 
-            #TODO Add support for sending data
-            # Sending bitfield is options and not needed when client does not
-            # have any pieces. Thus we do not send any bitfield message
+                #TODO Add support for sending data
+                # Sending bitfield is options and not needed when client does not
+                # have any pieces. Thus we do not send any bitfield message
 
-            # let the peer know we're interested in downloading pieces
-            await self._send_interested()
-            self.my_state.append("interested")
+                # let the peer know we're interested in downloading pieces
+                await self._send_interested()
+                self.my_state.append("interested")
 
-            # Start reading responses as a stream of messages for as long as
-            # the connection is open and data is t transmitted
+                # Start reading responses as a stream of messages for as long as
+                # the connection is open and data is transmitted
 
-            async for message in PeerStreamIterator(self.reader, buffer):
-                if "stopped" in self.my_state:
-                    break
-                if type(message) is BitField:
-                    self.piece_manager.add_peer(self.remote_id, message.bitfield)
-                elif type(message) is Interested:
-                    self.peer_state.append('interested')
-                elif type(message) is NotInterested:
-                    if 'interested' in self.peer_state:
-                        self.peer_state.remove('interested')
-                elif type(message) is Choke:
-                    self.my_state.append("choked")
-                elif type(message) is Unchoke:
-                    if "choked" in self.my_state:
-                        self.my_state.remove("choked")
-                elif type(message) is Have:
-                    self.piece_manager.update_peer(self.remote_id,
-                            message.index)
-                elif type(message) is KeepAlive:
-                    pass
-                elif type(message) is Piece:
-                    self.my_state.remove("pending_request")
-                    self.on_block_cb(
-                            peer_id=self.remote_id, 
-                            piece_index=message.index,
-                            block_offset=message.begin,
-                            data=message.block)
-                elif type(message) is Request:
-                    #TODO Add support for sending data
-                    logging.info("Ignoring the received Request message")
-                elif type(message) is Cancel:
-                    #TODO Add support for sending data
-                    logging.info("Ignoring the received Cancel message")
+                async for message in PeerStreamIterator(self.reader, buffer):
+                    if "stopped" in self.my_state:
+                        break
+                    if type(message) is BitField:
+                        self.piece_manager.add_peer(self.remote_id, message.bitfield)
+                    elif type(message) is Interested:
+                        self.peer_state.append('interested')
+                    elif type(message) is NotInterested:
+                        if 'interested' in self.peer_state:
+                            self.peer_state.remove('interested')
+                    elif type(message) is Choke:
+                        self.my_state.append("choked")
+                    elif type(message) is Unchoke:
+                        if "choked" in self.my_state:
+                            self.my_state.remove("choked")
+                    elif type(message) is Have:
+                        self.piece_manager.update_peer(self.remote_id,
+                                message.index)
+                    elif type(message) is KeepAlive:
+                        pass
+                    elif type(message) is Piece:
+                        self.my_state.remove("pending_request")
+                        self.on_block_cb(
+                                peer_id=self.remote_id, 
+                                piece_index=message.index,
+                                block_offset=message.begin,
+                                data=message.block)
+                    elif type(message) is Request:
+                        #TODO Add support for sending data
+                        logging.info("Ignoring the received Request message")
+                    elif type(message) is Cancel:
+                        #TODO Add support for sending data
+                        logging.info("Ignoring the received Cancel message")
 
-                # send block request to remote peer if we're interested
-                if self.are_interested():
-                    self.my_state.append("pending_request")
-                    await self._request_piece()
+                    # send block request to remote peer if we're interested
+                    if self.are_interested():
+                        self.my_state.append("pending_request")
+                        await self._request_piece()
 
-        except ProtocolError as e:
-            logging.exception("ProtocolError")
-        except (ConnectionRefusedError, TimeoutError):
-            logging.warning("Unable to connect to peer")
-        except (ConnectionResetError, CancelledError):
-            logging.warning("Connection closed")
-        except Exception as e:
-            logging.exception("An error occurred")
+            except ProtocolError as e:
+                logging.exception("ProtocolError with peer {ip}")
+            except (ConnectionRefusedError, TimeoutError):
+                logging.warning(f"Unable to connect to peer {ip}")
+            except (ConnectionResetError, CancelledError):
+                logging.warning("Connection to {ip} closed")
+            except Exception as e:
+                logging.exception("An error occurred with peer {ip}")
+                self.cancel()
+                raise e
             self.cancel()
-            raise e
-        self.cancel()
 
     def cancel(self):
         """
@@ -189,6 +191,7 @@ class PeerConnection:
         # TODO According to spec we should validate that the peer id received
         # from the peer match the peer_id received from the tracker
         self.remote_id = response.peer_id
+        logging.debug(f"peer_id {self.peer_id} received {response.peer_id}")
         logging.info("Handshake with peer was successful")
 
         # We need to return the remaining buffer data, since we might have read
@@ -239,7 +242,7 @@ class PeerStreamIterator:
                             return message
                     raise StopAsyncIteration()
             except ConnectionResetError:
-                logging.debug("Connectoin closed by peer")
+                logging.debug("Connection closed by peer")
                 raise StopAsyncIteration()
             except CancelledError:
                 raise StopAsyncIteration()
@@ -308,7 +311,7 @@ class PeerStreamIterator:
                     _consume()
                     return Have.decode(data)
                 elif message_id is PeerMessage.Piece:
-                    data = _dat()
+                    data = _data()
                     _consume()
                     return Piece.decode(data)
                 elif message_id is PeerMessage.Request:
@@ -320,7 +323,7 @@ class PeerStreamIterator:
                     _consume()
                     return Cancel.decode(data)
             else:
-                logging.debug("Not enough in buffer in order to parse")
+                logging.debug(f"Not enough in buffer in order to parse, message_length is {message_length}, but buffer length is  {len(self.buffer)}")
         return None
 
 class PeerMessage:
@@ -350,7 +353,7 @@ class PeerMessage:
     Handshake = None # Handshake is not really part of the messages
     KeepAlive = None # KeepAlive has no ID according to spec
 
-    def encode(self) -> bytes:
+    def encode(self) -> Optional[bytes]:
         """
             Encodes this object instance to the raw bytes representing the
             entire message (ready to be transmitted)
@@ -414,14 +417,14 @@ class Handshake(PeerMessage):
             Decodes the given BitTorrent message into a handshake message, if
             not a valid message, None is returned
         """
-        logging.debug(f"Decoding Handshake of length: {len(data)}")
         if len(data) < 49+19:
             return None
         data_parsed = struct.unpack(">B19s8x20s20s", data)
+        logging.debug(f"Decoding Handshake of length: {len(data)} with peer {data_parsed[3]} and hash {data_parsed[2]}")
         return cls(info_hash=data_parsed[2], peer_id=data_parsed[3])
                 
     def __str__(self):
-        return "Handshake"
+        return f"Handshake with peer {self.peer_id} and hash {self.info_hash}"
 
 class KeepAlive(PeerMessage):
     """
@@ -464,8 +467,8 @@ class BitField(PeerMessage):
             not a valid message, None is returned
         """
         message_length = struct.unpack(">I", data[:4])[0]
-        logging.debug(f"Decoding BitField of length: {message_length}")
         data_parsed = struct.unpack(">Ib"+str(message_length-1)+"s", data)
+        logging.debug(f"Decoding BitField of length: {message_length} with data {int(data_parsed[2].hex(), base=16):b}")
         return cls(data_parsed[2])
                 
     def __str__(self):
@@ -527,7 +530,7 @@ class Choke(PeerMessage):
     def __str__(self):
         return "Choke"
 
-class UnChoke(PeerMessage):
+class Unchoke(PeerMessage):
     """
         The unchoke message is used to tell the peer to start requesting pieces
         from the remote peer
@@ -643,12 +646,10 @@ class Piece(PeerMessage):
 
     @classmethod
     def decode(cls, data: bytes):
-        logging.debug(f"Decoding Piece message of length {len(data)}")
         message_len = struct.unpack(">I", data[:4])[0]
-        if len(data) > message_len:
-            return None
         parsed_data = struct.unpack(">IbII"+str(message_len-cls.length)+"s",
                 data[:message_len+4])
+        logging.debug(f"Decoding Piece message of length {len(data)} with index {parsed_data[2]} begin {parsed_data[3]} and block {parsed_data[4]}")
         return cls(parsed_data[2], parsed_data[3], parsed_data[4])
 
     def __str__(self):
