@@ -23,7 +23,7 @@ def main():
         level_log = logging.DEBUG
 
     if args.log:
-        logging.basicConfig(filename=args.log, filemode="w",
+        logging.basicConfig(filename=args.log, filemode="a",
                 level=level_log, format='%(asctime)s %(levelname)s %(message)s')
     else:
         logging.basicConfig(level=level_log)
