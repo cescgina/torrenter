@@ -97,8 +97,8 @@ class Block:
 	final block which might (most likely) is smaller than REQUEST_SIZE.
     """
     Missing = 0
-    Pending = 0
-    Retrieved = 0
+    Pending = 1
+    Retrieved = 2
 
     def __init__(self, piece: int, offset: int, length: int):
         self.piece = piece
