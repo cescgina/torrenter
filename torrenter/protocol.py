@@ -649,7 +649,7 @@ class Piece(PeerMessage):
         message_len = struct.unpack(">I", data[:4])[0]
         parsed_data = struct.unpack(">IbII"+str(message_len-cls.length)+"s",
                 data[:message_len+4])
-        logging.debug(f"Decoding Piece message of length {len(data)} with index {parsed_data[2]} begin {parsed_data[3]} and block {parsed_data[4]}")
+        logging.debug(f"Decoding Piece message of length {len(data)} with index {parsed_data[2]} begin {parsed_data[3]} and block of length {len(parsed_data[4])}")
         return cls(parsed_data[2], parsed_data[3], parsed_data[4])
 
     def __str__(self):
