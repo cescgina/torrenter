@@ -139,7 +139,7 @@ class Piece:
             return missing[0]
         return None
 
-    def block_recieved(self, offset: int, data: bytes):
+    def block_received(self, offset: int, data: bytes):
         """
             Update block information that the given block is now received
             
@@ -325,7 +325,7 @@ class PieceManager:
         """
         logging.debug(f"Recieved block {block_offset} for piece {piece_index} from peer {peer_id}")
         for index, request in enumerate(self.pending_blocks):
-            if request.block.piece == piece_index and request.block_offset == block_offset:
+            if request.block.piece == piece_index and request.block.offset == block_offset:
                 del self.pending_blocks[index]
                 break
 
