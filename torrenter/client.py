@@ -340,7 +340,7 @@ class PieceManager:
                     self.have_pieces.append(piece)
                     complete = (self.total_pieces - len(self.missing_pieces)
                             - len(self.ongoing_pieces))
-                    logging.info(f"{complete} / {self.total_pieces} pieces downloaded {100*complete/self.total_pieces:.3f}")
+                    logging.info(f"{complete} / {self.total_pieces} pieces downloaded {100*complete/self.total_pieces:.2f} %")
                 else:
                     logging.info(f"Discarding corrupt piece {index}")
                     piece.reset()
