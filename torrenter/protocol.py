@@ -83,7 +83,7 @@ class PeerConnection:
                 # Start reading responses as a stream of messages for as long as
                 # the connection is open and data is transmitted
 
-                async for message in PeerStreamIterator(self.reader, buffer):
+                async for message in PeerStreamIterator(self.reader, self.remote_id, buffer):
                     if "stopped" in self.my_state:
                         break
                     if type(message) is BitField:
@@ -216,9 +216,10 @@ class PeerStreamIterator:
     """
     CHUNK_SIZE = 10*1024
 
-    def __init__(self, reader, initial: bytes=None):
+    def __init__(self, reader, remote_id, initial: bytes=None):
         self.reader = reader
         self.buffer = initial if initial else b""
+        self.remote_id = remote_id
 
     async def __aiter__(self):
         return self
@@ -235,14 +236,14 @@ class PeerStreamIterator:
                     if message:
                         return message
                 else:
-                    logging.debug("No data read from stream")
+                    logging.debug(f"No data read from stream from peer {self.remote_id}")
                     if self.buffer:
                         message = self.parse()
                         if message:
                             return message
                     raise StopAsyncIteration()
             except ConnectionResetError:
-                logging.debug("Connection closed by peer")
+                logging.debug(f"Connection closed by peer {self.remote_id}")
                 raise StopAsyncIteration()
             except CancelledError:
                 raise StopAsyncIteration()
@@ -250,7 +251,7 @@ class PeerStreamIterator:
                 # catch to stop logging
                 raise e
             except Exception:
-                logging.exception("Error when iterating over stream!")
+                logging.exception(f"Error when iterating over stream from peer {self.remote_id}!")
                 raise StopAsyncIteration()
         raise StopAsyncIteration()
 
@@ -323,7 +324,7 @@ class PeerStreamIterator:
                     _consume()
                     return Cancel.decode(data)
             else:
-                logging.debug(f"Not enough in buffer in order to parse, message_length is {message_length}, but buffer length is  {len(self.buffer)}")
+                logging.debug(f"Not enough in buffer in order to parse, message_length is {message_length}, but buffer length is  {len(self.buffer)}, peer {self.remote_id}")
         return None
 
 class PeerMessage:
@@ -468,7 +469,8 @@ class BitField(PeerMessage):
         """
         message_length = struct.unpack(">I", data[:4])[0]
         data_parsed = struct.unpack(">Ib"+str(message_length-1)+"s", data)
-        logging.debug(f"Decoding BitField of length: {message_length} with data {int(data_parsed[2].hex(), base=16):b}")
+        # logging.debug(f"Decoding BitField of length: {message_length} with data {int(data_parsed[2].hex(), base=16):b}")
+        logging.debug(f"Decoding BitField of length: {message_length}")
         return cls(data_parsed[2])
                 
     def __str__(self):
