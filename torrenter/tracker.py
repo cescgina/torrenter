@@ -73,7 +73,15 @@ class Tracker:
     def __init__(self, torrent):
         self.id = _calculate_peer_id()
         self.torrent = torrent
-        self.http_client = aiohttp.ClientSession()
+        # self.http_client = aiohttp.ClientSession()
+
+    async def fetch_request(self, client, params):
+        url = self.torrent.announce + "?" + urlencode(params)
+        async with client.get(url) as response:
+            if not response.status == 200:
+                raise ConnectionError("Unable to connect to tracker")
+            data = await response.read()
+            return TrackerResponse(bencoding.Decoder(data).decode())
 
     async def connect(self, first: bool=None, uploaded: int=0, downloaded: int=0):
         params = {"info_hash": self.torrent.info_hash, "peer_id": self.id,
@@ -82,15 +90,8 @@ class Tracker:
         	"compact": 1}
         if first:
             params["event"] = "started"
-        url = self.torrent.announce + "?" + urlencode(params)
-        async with self.http_client.get(url) as response:
-            if not response.status == 200:
-                raise ConnectionError("Unable to connect to tracker")
-            data = await response.read()
-            return TrackerResponse(bencoding.Decoder(data).decode())
-
-    def close(self):
-        self.http_client.close()
+        async with aiohttp.ClientSession() as client:
+            return await self.fetch_request(client, params)
 
     def raise_for_error(self, tracker_response):
         """
