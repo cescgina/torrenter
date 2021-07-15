@@ -323,6 +323,7 @@ class PieceManager:
             written to disk and the piece is indicated as Have
         """
         logging.debug(f"Recieved block {block_offset} for piece {piece_index} from peer {peer_id}")
+        index = None
         for index, request in enumerate(self.pending_blocks):
             if request.block.piece == piece_index and request.block.offset == block_offset:
                 del self.pending_blocks[index]
@@ -348,7 +349,7 @@ class PieceManager:
 
     def _expired_requests(self, peer_id) -> Optional[Block]:
         """
-            Go through previously request blocks, if any one have been in the
+            Go through previously requested blocks, if any one have been in the
             requested state for longer than MAX_PENDING_TIME return the block
             to be re-requested
 
@@ -360,7 +361,7 @@ class PieceManager:
                 if request.added + self.max_pending_time < current:
                     logging.info(f"Re-requesting block {request.block.offset} for piece {request.block.piece}")
                     # reset expiration timer
-                    request.added = current
+                    request = request._replace(added=current)
                     return request.block
         return None
 
