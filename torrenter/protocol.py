@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import struct
-from asyncio import Queue
+from asyncio import Queue, TimeoutError
 from typing import Optional
 from concurrent.futures import CancelledError
 
@@ -123,13 +123,13 @@ class PeerConnection:
                         await self._request_piece()
 
             except ProtocolError as e:
-                logging.exception("ProtocolError with peer {ip}")
+                logging.exception(f"ProtocolError with peer {self.remote_id}")
             except (ConnectionRefusedError, TimeoutError):
-                logging.warning(f"Unable to connect to peer {ip}")
+                logging.warning(f"Unable to connect to peer {self.remote_id}")
             except (ConnectionResetError, CancelledError):
-                logging.warning("Connection to {ip} closed")
+                logging.warning(f"Connection to {self.remote_id} closed")
             except Exception as e:
-                logging.exception("An error occurred with peer {ip}")
+                logging.exception(f"An error occurred with peer {self.remote_id}")
                 self.cancel()
                 raise e
             self.cancel()
@@ -229,14 +229,16 @@ class PeerStreamIterator:
         # it and return the message. Until then keep reading from stream
         while True:
             try:
-                data = await self.reader.read(PeerStreamIterator.CHUNK_SIZE)
+                # data = await self.reader.read(PeerStreamIterator.CHUNK_SIZE)
+                # set a timeout for 3 seconds
+                data = await asyncio.wait_for(self.reader.read(PeerStreamIterator.CHUNK_SIZE), 3)
                 if data:
                     self.buffer += data
                     message = self.parse()
                     if message:
                         return message
                 else:
-                    logging.debug(f"No data read from stream from peer {self.remote_id}")
+                    logging.debug(f"No data read from stream from peer {self.remote_id} length of buffer {len(self.buffer)}")
                     if self.buffer:
                         message = self.parse()
                         if message:
@@ -246,6 +248,9 @@ class PeerStreamIterator:
                 logging.debug(f"Connection closed by peer {self.remote_id}")
                 raise StopAsyncIteration()
             except CancelledError:
+                raise StopAsyncIteration()
+            except TimeoutError:
+                logging.debug(f"Timeout while reading from peer {self.remote_id}")
                 raise StopAsyncIteration()
             except StopAsyncIteration as e:
                 # catch to stop logging
