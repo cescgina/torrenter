@@ -51,13 +51,13 @@ class TrackerResponse:
         # the peers are encoded in a single string
         peers = self.response[b"peers"]
         if type(peers) == list:
-            raise NotImplementedError()
+            return [(p[b"ip"], p[b"port"], p[b"peer_id"]) for p in peers]
         else:
 	    # Split the string in pieces of length 6 bytes, where the first
             # 4 characters is the IP the last 2 is the TCP port.
             peers = [peers[i:i+6] for i in range(0, len(peers), 6)]
 
-            return [(socket.inet_ntoa(p[:4]), _decode_port(p[4:])) for p in peers]
+            return [(socket.inet_ntoa(p[:4]), _decode_port(p[4:]), b"") for p in peers]
 
     def __bool__(self):
         return not self.failure
