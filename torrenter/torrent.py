@@ -31,6 +31,9 @@ class Torrent:
             # multi-file torrent
             files_dict = files[b"files"]
             self.multi_file = True
+            for f in files_dict:
+                # provide a unified interface for both cases
+                f[b"name"] = b"".join(f[b"path"])
         else:
             files_dict = [files]
             self.multi_file = False
