@@ -53,28 +53,43 @@ class PeerConnection:
         self.piece_manager = piece_manager
         self.on_block_cb = on_block_cb
         self.future = asyncio.ensure_future(self._start())  # Start this worker
+        self.ip = None
+        self.port = None
 
     def are_interested(self):
         return "choked" not in self.my_state and "pending_request" not in self.my_state and "interested" in self.my_state
 
+    def is_interested_peer(self):
+        return "choked" not in self.peer_state and "interested" in self.peer_state
+
     async def _start(self):
         while 'stopped' not in self.my_state:
-            ip, port = await self.queue.get()
+            ip, port, id_peer = await self.queue.get()
             logging.info(f"Got assigned peer with ip {ip} and port {port}")
 
             try:
-                #TODO: for some reason it does not seem to work to open a new
-                # connection if the first one drops (i.e. second loop)
                 logging.debug(f"Attempting to connect to peer: {ip} using port {port}")
                 self.reader, self.writer = await asyncio.open_connection(ip, port)
                 logging.info(f"Connection open to peer: {ip} using port {port}")
+                self.ip = ip
+                self.port = port
 
                 # it's our responsability to initiate the handshake
-                buffer = await self._handshake()
+                buffer = await self._handshake(id_peer)
 
-                #TODO Add support for sending data
+                logging.debug(f"Peer with ip {self.ip} is {self.remote_id}")
                 # Sending bitfield is options and not needed when client does not
                 # have any pieces. Thus we do not send any bitfield message
+                bitfield = self.piece_manager.bitfield
+                if bitfield:
+                    await self._send_bitfield(bitfield)
+
+                # the default state for a connection is that peer is not
+                # interested and we are choked
+                self.my_state = ["choked"]
+                self.peer_state = ["choked"]
+
+                await self._send_unchoke()
 
                 # let the peer know we're interested in downloading pieces
                 await self._send_interested()
@@ -86,34 +101,47 @@ class PeerConnection:
                 async for message in PeerStreamIterator(self.reader, self.remote_id, buffer):
                     if "stopped" in self.my_state:
                         break
-                    if type(message) is BitField:
+                    if message == 0:
+                        await self._send_keepalive()
+                    elif type(message) is BitField:
+                        logging.debug(f"Received BitField message from peer {self.remote_id}")
                         self.piece_manager.add_peer(self.remote_id, message.bitfield)
                     elif type(message) is Interested:
+                        logging.debug(f"Received Interested message from peer {self.remote_id}")
                         self.peer_state.append('interested')
                     elif type(message) is NotInterested:
+                        logging.debug(f"Received NotInterested message from peer {self.remote_id}")
                         if 'interested' in self.peer_state:
                             self.peer_state.remove('interested')
                     elif type(message) is Choke:
                         self.my_state.append("choked")
+                        logging.debug(f"Received Choke message from peer {self.remote_id}")
                     elif type(message) is Unchoke:
+                        logging.debug(f"Received Unchoke message from peer {self.remote_id}")
                         if "choked" in self.my_state:
                             self.my_state.remove("choked")
                     elif type(message) is Have:
+                        logging.debug(f"Received Have message from peer {self.remote_id}")
                         self.piece_manager.update_peer(self.remote_id,
                                 message.index)
                     elif type(message) is KeepAlive:
+                        logging.debug(f"Received KeepAlive message from peer {self.remote_id}")
                         pass
                     elif type(message) is Piece:
+                        logging.debug(f"Received Piece message from peer {self.remote_id}")
                         self.my_state.remove("pending_request")
-                        self.on_block_cb(
+                        await self.on_block_cb(
                                 peer_id=self.remote_id, 
                                 piece_index=message.index,
                                 block_offset=message.begin,
                                 data=message.block)
                     elif type(message) is Request:
-                        #TODO Add support for sending data
-                        logging.info("Ignoring the received Request message")
+                        logging.debug(f"Received Request message from peer {self.remote_id}")
+                        if self.is_interested_peer():
+                            await self._send_piece(message.index, message.begin,
+                                             message.length)
                     elif type(message) is Cancel:
+                        logging.debug(f"Received Cancel message from peer {self.remote_id}")
                         #TODO Add support for sending data
                         logging.info("Ignoring the received Cancel message")
 
@@ -126,13 +154,22 @@ class PeerConnection:
                 logging.exception(f"ProtocolError with peer {self.remote_id}")
             except (ConnectionRefusedError, TimeoutError):
                 logging.warning(f"Unable to connect to peer {self.remote_id}")
-            except (ConnectionResetError, CancelledError):
-                logging.warning(f"Connection to {self.remote_id} closed")
+            except (ConnectionResetError, CancelledError) as e:
+                logging.warning(f"Connection to {self.remote_id} closed, due to error {e}")
             except Exception as e:
-                logging.exception(f"An error occurred with peer {self.remote_id}")
                 self.cancel()
+                logging.exception(f"An error occurred with peer {self.remote_id}")
                 raise e
             self.cancel()
+            # self.enqueue()
+
+
+    def enqueue(self):
+        """
+            Re-enqueue the current address of the peer
+        """
+        logging.debug(f"Adding again peer {self.remote_id} to the queue")
+        self.queue.put_nowait((self.ip, self.port))
 
     def cancel(self):
         """
@@ -140,8 +177,9 @@ class PeerConnection:
             connection
         """
         logging.info(f"Closing peer {self.remote_id}")
-        if not self.future.done():
-            self.future.cancel()
+        # if not self.future.done():
+        #     logging.debug(f"Cancelling future for peer {self.remote_id}")
+        #     self.future.cancel()
         if self.writer:
             self.writer.close()
 
@@ -159,17 +197,57 @@ class PeerConnection:
         if not self.future.done():
             self.future.cancel()
 
+    async def _send_unchoke(self):
+        if "choked" in self.peer_state:
+            self.peer_state.remove("choked")
+        message = Unchoke()
+        logging.debug(f"Send Unchoke message to peer {self.remote_id}")
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
+    async def send_have(self, index: int):
+        if self.writer is None:
+            return
+        message = Have(index)
+        logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}")
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
+    async def _send_piece(self, index: int, begin: int, length: int):
+        block = self.piece_manager.get_block_from_piece(index, begin)
+        assert len(block.data) == length
+        if block:
+            message = Piece(index, begin, block.data)
+            logging.debug(f"Sending block {begin} of piece {index} to peer {self.remote_id}")
+            self.piece_manager.bytes_uploaded(length)
+            self.writer.write(message.encode())
+            await self.writer.drain()
+
     async def _request_piece(self):
         block = self.piece_manager.next_request(self.remote_id)
         if block:
-            message = Request(block.piece, block.offset, block.length).encode()
+            message = Request(block.piece, block.offset, block.length)
 
             logging.debug(f"Requesting block {block.piece} for piece {block.offset} of {block.length} bytes from peer {self.remote_id}")
 
-            self.writer.write(message)
+            self.writer.write(message.encode())
             await self.writer.drain()
+        else:
+            logging.debug(f"Peer {self.remote_id} has no available block for us")
 
-    async def _handshake(self):
+    async def _send_bitfield(self, bitfield):
+        message = BitField(bitfield)
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
+    async def _send_keepalive(self):
+        message = KeepAlive()
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
+    async def _handshake(self, id_peer: bytes):
         """
             Send the initial handshake to the remote peer and wait for the peer
             to respond with its handshake
@@ -188,8 +266,12 @@ class PeerConnection:
         if not response.info_hash == self.info_hash:
             raise ProtocolError("Handshake with invalid info_hash")
 
-        # TODO According to spec we should validate that the peer id received
-        # from the peer match the peer_id received from the tracker
+        # According to spec we should validate that the peer id received
+        # from the peer match the peer_id received from the tracker, but we can
+        # only do it if the tracker has responded with a dictonary model for
+        # the peers
+        if id_peer:
+            assert id_peer == response.peer_id, f"peer_id {id_peer} does not match the id from the response {response.peer_id}"
         self.remote_id = response.peer_id
         logging.debug(f"peer_id {self.peer_id} received {response.peer_id}")
         logging.info("Handshake with peer was successful")
@@ -201,7 +283,7 @@ class PeerConnection:
 
     async def _send_interested(self):
         message = Interested()
-        logging.debug(f"Sending message: {message}")
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -220,8 +302,9 @@ class PeerStreamIterator:
         self.reader = reader
         self.buffer = initial if initial else b""
         self.remote_id = remote_id
+        self.tries = 0
 
-    async def __aiter__(self):
+    def __aiter__(self):
         return self
 
     async def __anext__(self):
@@ -231,18 +314,22 @@ class PeerStreamIterator:
             try:
                 # data = await self.reader.read(PeerStreamIterator.CHUNK_SIZE)
                 # set a timeout for 3 seconds
-                data = await asyncio.wait_for(self.reader.read(PeerStreamIterator.CHUNK_SIZE), 3)
+                # set a timeout for 120 seconds, to send a keepAlive message
+                data = await asyncio.wait_for(self.reader.read(PeerStreamIterator.CHUNK_SIZE), 120)
+                self.tries = 0
                 if data:
                     self.buffer += data
                     message = self.parse()
                     if message:
                         return message
                 else:
-                    logging.debug(f"No data read from stream from peer {self.remote_id} length of buffer {len(self.buffer)}")
                     if self.buffer:
+                        logging.debug(f"No data read from stream from peer {self.remote_id} trying to parse buffer contents, with length {len(self.buffer)}")
                         message = self.parse()
                         if message:
+                            logging.debug(f"Buffer from peer {self.remote_id} has a {message} message, {len(self.buffer)} remaining in buffer")
                             return message
+                        logging.debug(f"No data read from stream from peer {self.remote_id} length of buffer {len(self.buffer)}, but no consumeable message")
                     raise StopAsyncIteration()
             except ConnectionResetError:
                 logging.debug(f"Connection closed by peer {self.remote_id}")
@@ -250,15 +337,22 @@ class PeerStreamIterator:
             except CancelledError:
                 raise StopAsyncIteration()
             except TimeoutError:
-                logging.debug(f"Timeout while reading from peer {self.remote_id}")
-                raise StopAsyncIteration()
+                # if self.tries == 5:
+                #     logging.debug(f"Reached 5 tries, close the peer {self.remote_id}")
+                #     raise StopAsyncIteration()
+                # logging.debug(f"Timeout while reading from peer {self.remote_id}, attempt {self.tries}/5")
+                # # sleep for 5 seconds before trying again
+                # await asyncio.sleep(5)
+                # self.tries += 1
+                # timeout when reading, send keepAlive to peer
+                logging.debug("120 seconds without message from peer, send keepalive")
+                return 0
             except StopAsyncIteration as e:
                 # catch to stop logging
                 raise e
             except Exception:
                 logging.exception(f"Error when iterating over stream from peer {self.remote_id}!")
                 raise StopAsyncIteration()
-        raise StopAsyncIteration()
 
     def parse(self):
         """
@@ -279,8 +373,6 @@ class PeerStreamIterator:
         if len(self.buffer) > 4: # 4 bytes is needed to identify the message
             message_length = struct.unpack(">I", self.buffer[0:4])[0]
             
-            if message_length == 0:
-                return KeepAlive()
             if len(self.buffer) >= message_length:
                 message_id = struct.unpack(">b", self.buffer[4:5])[0]
 
@@ -296,7 +388,10 @@ class PeerStreamIterator:
                     """
                     return self.buffer[:header_length+message_length]
 
-                if message_id is PeerMessage.BitField:
+                if message_length == 0:
+                    _consume()
+                    return KeepAlive()
+                elif message_id is PeerMessage.BitField:
                     data = _data()
                     _consume()
                     return BitField.decode(data)
@@ -442,6 +537,9 @@ class KeepAlive(PeerMessage):
     def __str__(self):
         return "KeepAlive"
 
+    def encode(self):
+        return struct.pack(">I", 0)
+
 class BitField(PeerMessage):
     """
         The BitField is a message with variable length where the payload is
@@ -464,7 +562,7 @@ class BitField(PeerMessage):
                 ">Ib"+str(bits_length)+"s",
                 1+bits_length,
                 PeerMessage.BitField,
-                self.bitfield)
+                bytes(self.bitfield))
 
     @classmethod
     def decode(cls, data: bytes):
@@ -574,7 +672,7 @@ class Have(PeerMessage):
 
     @classmethod
     def decode(cls, data:bytes):
-        logging.debug("Decoding Have message of length {len(data)}")
+        logging.debug(f"Decoding Have message of length {len(data)}")
         index = struct.unpack(">IbI", data)[2]
         return cls(index)
 
@@ -654,8 +752,12 @@ class Piece(PeerMessage):
     @classmethod
     def decode(cls, data: bytes):
         message_len = struct.unpack(">I", data[:4])[0]
-        parsed_data = struct.unpack(">IbII"+str(message_len-cls.length)+"s",
-                data[:message_len+4])
+        try:
+            parsed_data = struct.unpack(">IbII"+str(message_len-cls.length)+"s",
+                    data[:message_len+4])
+        except struct.error:
+            logging.debug(f"Attempted decoding Piece message of length {message_len} from buffer of length {len(data)} ")
+            return None
         logging.debug(f"Decoding Piece message of length {len(data)} with index {parsed_data[2]} begin {parsed_data[3]} and block of length {len(parsed_data[4])}")
         return cls(parsed_data[2], parsed_data[3], parsed_data[4])
 
