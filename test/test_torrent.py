@@ -42,4 +42,4 @@ class SXSWTorrentTests(unittest.TestCase):
     """
     def test_instaniate(self):
         t = Torrent("test/data/SXSW_2016_Showcasing_Artists_Part1.torrent")
-        self.assertFalse(t.multi_file)
+        self.assertTrue(t.multi_file)

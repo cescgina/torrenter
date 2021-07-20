@@ -23,13 +23,13 @@ class PieceTests(unittest.TestCase):
     def test_reset_mising_block(self):
         p = Piece(None, 0, blocks=[])
         with no_logging:
-            p.block_recieved(123, b"")  # should not throw
+            p.block_received(123, b"")  # should not throw
 
     def test_reset_block(self):
         blocks = [Block(0, offset, length=10) for offset in range(0, 100, 10)]
         p = Piece(None, 0, blocks)
 
-        p.block_recieved(10, b"")
+        p.block_received(10, b"")
 
         self.assertEqual(1, len([b for b in p.blocks if b.status is
             Block.Retrieved]))

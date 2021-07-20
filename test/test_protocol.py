@@ -1,13 +1,24 @@
 import unittest
 
-from torrenter.protocol import PeerStreamIterator, Handshake, Have, Request, Piece, Interested, Cancel
+from torrenter.protocol import PeerStreamIterator, Handshake, Have, Request, Piece, Interested, Cancel, KeepAlive
 
 
 class PeerStreamIteratorTests(unittest.TestCase):
     def test_parse_empty_buffer(self):
-        iterator = PeerStreamIterator(None)
+        iterator = PeerStreamIterator(None, None)
         iterator.buffer = ""
         self.assertIsNone(iterator.parse())
+
+    def test_parse_multiple_messages(self):
+        iterator = PeerStreamIterator(None, None)
+        iterator.buffer = b"\x00\x00\x00\x00\x00\x00\x00\x05\x04\x00\x00\x00!\x00\x00\x00\x0b\x07\x00\x00\x00\x00\x00\x00\x00\x00ok"
+        msg = iterator.parse()
+        self.assertEqual(msg.encode(), KeepAlive().encode())
+        msg = iterator.parse()
+        self.assertEqual(msg.encode(), Have(33).encode())
+        msg = iterator.parse()
+        self.assertEqual(msg.encode(), Piece(0, 0, b"ok").encode())
+        self.assertEqual(iterator.buffer, b"")
         
 
 class HandshakeTest(unittest.TestCase):
