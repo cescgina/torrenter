@@ -46,6 +46,7 @@ class TorrentClient:
         while True:
             if self.piece_manager.complete or self.abort:
                 break
+
             current = time.time()
             if (not previous) or (previous + interval < current):
                 response = await self.tracker.connect(
@@ -53,12 +54,14 @@ class TorrentClient:
                         uploaded=self.piece_manager.bytes_uploaded,
                         downloaded=self.piece_manager.bytes_downloaded)
                 if response:
+                    logging.debug(f"Got response from tracker, with {len(response.peers)} peers and interval of {response.interval}")
                     previous = current
                     interval = response.interval
                     self._empty_queue()
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
             else:
+                logging.debug(f"Have to wait {(previous+interval)-current} seconds for next ping to tracker")
                 await asyncio.sleep(5)
         self.stop()
 
@@ -75,7 +78,7 @@ class TorrentClient:
             peer.stop()
         self.piece_manager.close()
 
-    def _on_block_retrieved(self, peer_id, piece_index, block_offset, data):
+    async def _on_block_retrieved(self, peer_id, piece_index, block_offset, data):
         """
             Callback function called by the `PeerConnection` when a block is
             retrieved from a peer
@@ -85,8 +88,12 @@ class TorrentClient:
 	    :param block_offset: The block offset within its piece
 	    :param data: The binary data retrieved
         """
-        self.piece_manager.block_received(peer_id=peer_id, piece_index=piece_index,
-					  block_offset=block_offset, data=data)
+        index_piece = self.piece_manager.block_received(peer_id=peer_id, piece_index=piece_index,
+                                                        block_offset=block_offset, data=data)
+        if index_piece is not None:
+            for peer in self.peers:
+                await peer.send_have(index_piece)
+
 
 class Block:
     """
@@ -201,6 +208,7 @@ class PieceManager:
         self.max_pending_time = 300 * 1000 #  5 minutes
         self.missing_pieces = self._initiate_pieces()
         self.total_pieces = len(torrent.pieces)
+        self.uploaded = 0
         self.fd = os.open(self.torrent.output_file, os.O_RDWR | os.O_CREAT)
 
     def _initiate_pieces(self) -> List[Piece]:
@@ -239,6 +247,31 @@ class PieceManager:
             os.close(self.fd)
 
     @property
+    def bitfield(self):
+        """
+            Generate a bitfield of the pieces we have
+        """
+        if not self.have_pieces:
+            return None
+        bitfield = [0 for _ in range(self.total_pieces)]
+        for piece in self.have_pieces:
+            bitfield[piece.index] = 1
+        return bitfield
+
+    def get_block_from_piece(self, index, offset):
+        """
+            Get the piece with index, return None if we don't have it
+        """
+        piece = None
+        for p in self.have_pieces:
+            if p.index == index:
+                piece = p
+                break
+        if piece:
+            return piece.blocks[offset]
+
+        
+    @property
     def complete(self):
         """
             Checks whether or not all pieces are downloaded for this torrent
@@ -261,8 +294,14 @@ class PieceManager:
         """
             Get the number of bytes uploaded
         """
-        #TODO: Add support for sending data
-        return 0
+        return self.uploaded
+
+    @bytes_uploaded.setter
+    def bytes_uploaded(self, value : int):
+        """
+            Update the number of bytes uploaded
+        """
+        self.uploaded += value
 
     def add_peer(self, peer_id, bitfield):
         """
@@ -309,7 +348,11 @@ class PieceManager:
         if not block:
             block = self._next_ongoing(peer_id)
             if not block:
-                block = self._get_rarest_piece(peer_id).next_request()
+                rare_piece = self._get_rarest_piece(peer_id)
+                if rare_piece:
+                    block = rare_piece.next_request()
+                else:
+                    return None
         return block
 
     def block_received(self, peer_id, piece_index, block_offset, data):
@@ -341,6 +384,7 @@ class PieceManager:
                     complete = (self.total_pieces - len(self.missing_pieces)
                             - len(self.ongoing_pieces))
                     logging.info(f"{complete} / {self.total_pieces} pieces downloaded {100*complete/self.total_pieces:.2f} %")
+                    return piece.index
                 else:
                     logging.info(f"Discarding corrupt piece {index}")
                     piece.reset()
@@ -381,7 +425,7 @@ class PieceManager:
 
     def _get_rarest_piece(self, peer_id):
         """
-            Given the current list of missing pieces, get the rares one first
+            Given the current list of missing pieces, get the rarest one first
             (i.e. a piece which fewest of its neighboring peers have)
         """
         piece_count = defaultdict(int)
@@ -391,6 +435,8 @@ class PieceManager:
             for p in self.peers:
                 piece_count[piece] += self.peers[p][piece.index]
 
+        if not piece_count:
+            return None
         rarest_piece = min(piece_count, key=lambda p: piece_count[p])
         self.missing_pieces.remove(rarest_piece)
         self.ongoing_pieces.append(rarest_piece)
