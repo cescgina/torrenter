@@ -104,7 +104,7 @@ class PeerConnection:
                     if message == 0:
                         await self._send_keepalive()
                     elif type(message) is BitField:
-                        logging.debug(f"Received BitField message from peer {self.remote_id}")
+                        logging.debug(f"Received BitField message from peer {self.remote_id}, with {sum(message.bitfield)} pieces")
                         self.piece_manager.add_peer(self.remote_id, message.bitfield)
                     elif type(message) is Interested:
                         logging.debug(f"Received Interested message from peer {self.remote_id}")
@@ -234,6 +234,7 @@ class PeerConnection:
             await self.writer.drain()
         else:
             logging.debug(f"Peer {self.remote_id} has no available block for us")
+            #TODO: should we send a NotInterested message here?
 
     async def _send_bitfield(self, bitfield):
         message = BitField(bitfield)
@@ -557,12 +558,12 @@ class BitField(PeerMessage):
             Encodes this object instance to the raw bytes representing the
             entire message (ready to be transmitted)
         """
-        bits_length = len(self.bitfield)
+        bits_length = len(self.bitfield.bytes)
         return struct.pack(
                 ">Ib"+str(bits_length)+"s",
                 1+bits_length,
                 PeerMessage.BitField,
-                bytes(self.bitfield))
+                self.bitfield.bytes)
 
     @classmethod
     def decode(cls, data: bytes):
