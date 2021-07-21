@@ -8,6 +8,8 @@ from asyncio import Queue
 from collections import namedtuple, defaultdict
 from hashlib import sha1
 
+from bitstring import BitArray
+
 from torrenter.protocol import PeerConnection, REQUEST_SIZE
 from torrenter.tracker import Tracker
 
@@ -253,10 +255,11 @@ class PieceManager:
         """
         if not self.have_pieces:
             return None
-        bitfield = [0 for _ in range(self.total_pieces)]
+        num_bytes = math.ceil(self.total_pieces / 8)
+        bitfield = BitArray(num_bytes*8)
         for piece in self.have_pieces:
             bitfield[piece.index] = 1
-        return bitfield
+        return bitfield.bytes
 
     def get_block_from_piece(self, index, offset):
         """
@@ -322,7 +325,7 @@ class PieceManager:
             Tries to remove a previously added peer (e.g. used if a peer
             connnection is dropped)
         """
-        self.peers.pop(peer_id)
+        self.peers.pop(peer_id, None)
 
     def next_request(self, peer_id) -> Optional[Block]:
         """
@@ -365,7 +368,7 @@ class PieceManager:
             state to be fetched again. If the hash succeds the partial piece is
             written to disk and the piece is indicated as Have
         """
-        logging.debug(f"Recieved block {block_offset} for piece {piece_index} from peer {peer_id}")
+        logging.debug(f"Received block {block_offset} for piece {piece_index} from peer {peer_id}")
         index = None
         for index, request in enumerate(self.pending_blocks):
             if request.block.piece == piece_index and request.block.offset == block_offset:
