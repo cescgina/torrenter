@@ -385,28 +385,29 @@ class PeerStreamIterator:
         # 4 bytes needs to be included when slicing the buffer
         header_length = 4
 
-        if len(self.buffer) > 4: # 4 bytes is needed to identify the message
-            message_length = struct.unpack(">I", self.buffer[0:4])[0]
+        if len(self.buffer) >= header_length: # 4 bytes is needed to identify the message
+            message_length = struct.unpack(">I", self.buffer[:header_length])[0]
             
+            def _consume():
+                """
+                    consume the current message from the read buffer
+                """
+                self.buffer = self.buffer[header_length+message_length:]
+
+            def _data():
+                """
+                    Extract the current message from the read buffer
+                """
+                return self.buffer[:header_length+message_length]
+
+            if message_length == 0:
+                _consume()
+                return KeepAlive()
+
             if len(self.buffer) >= message_length:
-                message_id = struct.unpack(">b", self.buffer[4:5])[0]
+                message_id = struct.unpack(">b", self.buffer[header_length:header_length+1])[0]
 
-                def _consume():
-                    """
-                        consume the current message from the read buffer
-                    """
-                    self.buffer = self.buffer[header_length+message_length:]
-
-                def _data():
-                    """
-                        Extract the current message from the read buffer
-                    """
-                    return self.buffer[:header_length+message_length]
-
-                if message_length == 0:
-                    _consume()
-                    return KeepAlive()
-                elif message_id is PeerMessage.BitField:
+                if message_id is PeerMessage.BitField:
                     data = _data()
                     _consume()
                     return BitField.decode(data)
