@@ -60,6 +60,13 @@ class TorrentClient:
                     previous = current
                     interval = response.interval
                     self._empty_queue()
+                    for peer in self.peers:
+                        if not peer.active:
+                            if peer.remote_id is not None:
+                                logging.debug(f"Removing peer {peer.remote_id} from piece manager")
+                                self.piece_manager.remove_peer(peer.remote_id)
+                            peer.restart_peer()
+
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
             else:

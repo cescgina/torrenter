@@ -189,6 +189,15 @@ class PeerConnection:
 
         self.queue.task_done()
 
+    def restart_peer(self):
+        """
+            Create a new task for this PeerConnection so that a new peer can be
+            connected after closing the previous one
+        """
+        if not self.future.cancelled():
+            return
+        self.future = asyncio.ensure_future(self._start())  # Start this worker
+
     def stop(self):
         """
             Stop this connection from the current peer (if a connection exits)
