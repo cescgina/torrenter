@@ -55,6 +55,7 @@ class PeerConnection:
         self.future = asyncio.ensure_future(self._start())  # Start this worker
         self.ip = None
         self.port = None
+        self.active = False
 
     def are_interested(self):
         return "choked" not in self.my_state and "pending_request" not in self.my_state and "interested" in self.my_state
@@ -69,13 +70,15 @@ class PeerConnection:
 
             try:
                 logging.debug(f"Attempting to connect to peer: {ip} using port {port}")
-                self.reader, self.writer = await asyncio.open_connection(ip, port)
-                logging.info(f"Connection open to peer: {ip} using port {port}")
                 self.ip = ip
                 self.port = port
+                self.remote_id = None
+                self.reader, self.writer = await asyncio.open_connection(ip, port)
+                logging.info(f"Connection open to peer: {ip} using port {port}")
 
                 # it's our responsability to initiate the handshake
                 buffer = await self._handshake(id_peer)
+                self.active = True
 
                 logging.debug(f"Peer with ip {self.ip} is {self.remote_id}")
                 # Sending bitfield is options and not needed when client does not
@@ -121,7 +124,7 @@ class PeerConnection:
                         if "choked" in self.my_state:
                             self.my_state.remove("choked")
                     elif type(message) is Have:
-                        logging.debug(f"Received Have message from peer {self.remote_id}")
+                        logging.debug(f"Received Have message, index {message.index} from peer {self.remote_id}")
                         self.piece_manager.update_peer(self.remote_id,
                                 message.index)
                     elif type(message) is KeepAlive:
@@ -150,12 +153,12 @@ class PeerConnection:
                         self.my_state.append("pending_request")
                         await self._request_piece()
 
-            except ProtocolError as e:
+            except ProtocolError:
                 logging.exception(f"ProtocolError with peer {self.remote_id}")
             except (ConnectionRefusedError, TimeoutError):
-                logging.warning(f"Unable to connect to peer {self.remote_id}")
-            except (ConnectionResetError, CancelledError) as e:
-                logging.warning(f"Connection to {self.remote_id} closed, due to error {e}")
+                logging.exception(f"Unable to connect to peer at ip {self.ip}")
+            except (ConnectionResetError, CancelledError) as err:
+                logging.warning(f"Connection to {self.remote_id} closed, due to error {err}")
             except Exception as e:
                 self.cancel()
                 logging.exception(f"An error occurred with peer {self.remote_id}")
@@ -177,9 +180,10 @@ class PeerConnection:
             connection
         """
         logging.info(f"Closing peer {self.remote_id}")
-        # if not self.future.done():
-        #     logging.debug(f"Cancelling future for peer {self.remote_id}")
-        #     self.future.cancel()
+        self.active = False
+        if not self.future.done():
+            logging.debug(f"Cancelling future for peer {self.remote_id}")
+            self.future.cancel()
         if self.writer:
             self.writer.close()
 
@@ -194,6 +198,7 @@ class PeerConnection:
         # The rest of the cleanup will eventually be managed by loop calling
         # cancel
         self.my_state.append("stopped")
+        self.active = False
         if not self.future.done():
             self.future.cancel()
 
@@ -206,7 +211,7 @@ class PeerConnection:
         await self.writer.drain()
 
     async def send_have(self, index: int):
-        if self.writer is None:
+        if not self.active:
             return
         message = Have(index)
         logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}")
