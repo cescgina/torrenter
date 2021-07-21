@@ -217,7 +217,7 @@ class PieceManager:
         self.max_pending_time = 300 * 1000 #  5 minutes
         self.missing_pieces = self._initiate_pieces()
         self.total_pieces = len(torrent.pieces)
-        self.uploaded = 0
+        self._bytes_uploaded = 0
         self.fd = os.open(self.torrent.output_file, os.O_RDWR | os.O_CREAT)
 
     def _initiate_pieces(self) -> List[Piece]:
@@ -268,7 +268,7 @@ class PieceManager:
             bitfield[piece.index] = 1
         return bitfield.bytes
 
-    def get_block_from_piece(self, index, offset):
+    def get_block_from_piece(self, index: int, offset: int):
         """
             Get the piece with index, return None if we don't have it
         """
@@ -304,14 +304,13 @@ class PieceManager:
         """
             Get the number of bytes uploaded
         """
-        return self.uploaded
+        return self._bytes_uploaded
 
-    @bytes_uploaded.setter
-    def bytes_uploaded(self, value : int):
+    def uploaded_bytes(self, value : int):
         """
             Update the number of bytes uploaded
         """
-        self.uploaded += value
+        self._bytes_uploaded += value
 
     def add_peer(self, peer_id, bitfield):
         """

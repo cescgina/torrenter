@@ -233,7 +233,7 @@ class PeerConnection:
         if block:
             message = Piece(index, begin, block.data)
             logging.debug(f"Sending block {begin} of piece {index} to peer {self.remote_id}")
-            self.piece_manager.bytes_uploaded(length)
+            self.piece_manager.uploaded_bytes(length)
             self.writer.write(message.encode())
             await self.writer.drain()
 

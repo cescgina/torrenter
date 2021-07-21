@@ -1,7 +1,10 @@
 import unittest
 
+from bitstring import BitArray
+
 from . import no_logging
-from torrenter.client import Piece, Block
+from torrenter.client import Piece, Block, PieceManager
+from torrenter.torrent import Torrent
 
 
 class PieceTests(unittest.TestCase):
@@ -35,3 +38,27 @@ class PieceTests(unittest.TestCase):
             Block.Retrieved]))
         self.assertEqual(9, len([b for b in p.blocks if b.status is
             Block.Missing]))
+
+class PieceManagerTests(unittest.TestCase):
+    def setUp(self):
+        self.piece_manager = PieceManager(Torrent("test/data/ubuntu-16.04-desktop-amd64.iso.torrent"))
+
+    def test_bitfield(self):
+        self.piece_manager.total_pieces = 5
+        p1 = Piece(None, 0, [])
+        p2 = Piece(None, 4, [])
+        self.piece_manager.have_pieces = [p1, p2]
+        self.assertEqual(b"\x88", self.piece_manager.bitfield)
+
+    def test_uploaded(self):
+        self.piece_manager.uploaded_bytes(5)
+        self.piece_manager.uploaded_bytes(10)
+        self.assertEqual(self.piece_manager.bytes_uploaded, 15)
+
+    def test_peers(self):
+        bits = BitArray([1, 0, 0])
+        peer_id = b"test"
+        self.piece_manager.add_peer(peer_id, bits)
+        self.assertTrue(self.piece_manager.peers[peer_id][0])
+        self.assertFalse(self.piece_manager.peers[peer_id][1])
+        self.assertFalse(self.piece_manager.peers[peer_id][2])
