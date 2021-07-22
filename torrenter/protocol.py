@@ -185,9 +185,10 @@ class PeerConnection:
             self.piece_manager.remove_peer(self.remote_id)
         if not self.future.done():
             logging.debug(f"Cancelling future for peer {self.remote_id}")
-            # retrieve exception to aviod log cluttering
-            self.future.exception()
             self.future.cancel()
+        if self.future.done():
+            # retrieve exception to avoid log cluttering
+            self.future.exception()
         if self.writer:
             self.writer.close()
 
@@ -251,7 +252,13 @@ class PeerConnection:
             self.writer.write(message.encode())
             await self.writer.drain()
         else:
+            missing, ongoing = self.piece_manager.peer_has_missing_pieces(self.remote_id)
             logging.debug(f"Peer {self.remote_id} has no available block for us")
+            if missing:
+                # this should never happen
+                logging.debug(f"Peer {self.remote_id} has a missing piece, but it was not selected")
+            if ongoing:
+                logging.debug(f"Peer {self.remote_id} has an ongoing piece, but it was not selected")
             #TODO: should we send a NotInterested message here?
 
     async def _send_bitfield(self, bitfield):

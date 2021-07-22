@@ -380,6 +380,17 @@ class PieceManager:
                 return None
         return block
 
+    def peer_has_missing_pieces(self, peer_id):
+        """
+            Check if peer has any of the pieces that are missing or ongoing
+
+            Returns two bools, whether it has any missing pieces and whether it
+            has any ongoing pieces
+        """
+        missing = [self.peers[peer_id][p.index] for p in self.missing_pieces]
+        ongoing = [self.peers[peer_id][p.index] for p in self.ongoing_pieces]
+        return any(missing), any(ongoing)
+
     def block_received(self, peer_id, piece_index, block_offset, data):
         """
             This method must be called when a block has succesfully been
