@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import errno
 import random
 import logging
 from typing import Optional, List
@@ -288,8 +289,12 @@ class PieceManager:
         return pieces
 
     def close(self):
-        if self.fd:
+        try:
             os.close(self.fd)
+        except OSError as e:
+            # catch and ignore Bad file descriptor error when closing
+            if e.errno != errno.EBADF:
+                raise e
 
     @property
     def bitfield(self):
