@@ -29,7 +29,8 @@ class PeerConnection:
 	the next available peer from off the queue and try to connect to that one
 	instead.
     """
-    def __init__(self, queue: Queue, info_hash, peer_id, piece_manager, on_block_cb=None):
+    def __init__(self, queue: Queue, info_hash, peer_id, piece_manager,
+                on_block_cb=None, on_block_request=None):
         """
 	    Constructs a PeerConnection and add it to the asyncio event-loop.
 	    Use `stop` to abort this connection and any subsequent connection
@@ -41,6 +42,8 @@ class PeerConnection:
 				  to request
 	    :param on_block_cb: The callback function to call when a block is
 				received from the remote peer
+            :param on_block_request: The callback function to call when a block
+                request is send, allows to set the client in end-game mode
         """
         self.my_state = []
         self.peer_state = []
@@ -52,6 +55,7 @@ class PeerConnection:
         self.reader = None
         self.piece_manager = piece_manager
         self.on_block_cb = on_block_cb
+        self.on_block_request = on_block_request
         self.future = asyncio.ensure_future(self._start())  # Start this worker
         self.ip = None
         self.port = None
@@ -152,6 +156,7 @@ class PeerConnection:
                     if self.are_interested():
                         self.my_state.append("pending_request")
                         await self._request_piece()
+                        self.on_block_request()
 
             except ProtocolError:
                 logging.exception(f"ProtocolError with peer {self.remote_id}")
@@ -231,6 +236,15 @@ class PeerConnection:
         logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}")
         self.writer.write(message.encode())
         await self.writer.drain()
+
+    async def send_cancel(self, index: int, begin: int, length: int):
+        if not self.active:
+            return
+        message = Cancel(index, begin, length)
+        logging.debug(f"Send Cancel message for piece {index}, block {begin} to peer {self.remote_id}")
+        self.writer.write(message.encode())
+        await self.writer.drain()
+
 
     async def _send_piece(self, index: int, begin: int, length: int):
         block = self.piece_manager.get_block_from_piece(index, begin)

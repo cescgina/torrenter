@@ -33,13 +33,15 @@ class TorrentClient:
         # request, as well as the logic to persist received pieces to disk.
         self.piece_manager = PieceManager(torrent)
         self.abort = False
+        self.endgame = False
 
     async def start(self):
         self.peers = [PeerConnection(self.available_peers, 
             self.tracker.torrent.info_hash,
             self.tracker.id,
             self.piece_manager,
-            self._on_block_retrieved)
+            self._on_block_retrieved,
+            self._on_request_send)
             for _ in range(MAX_PEER_CONNECTIONS)]
         # The time we last made an announce call (timestamp)
         previous = None
@@ -88,6 +90,21 @@ class TorrentClient:
             peer.stop()
         self.piece_manager.close()
 
+    def _on_request_send(self):
+        """
+            Callback function called by the `PeerConnection` when a request is
+            send
+
+            It is used to check whether all pieces have been requested and
+            enter endgame mode
+        """
+        if not self.piece_manager.missing_pieces and self.piece_manager.have_pieces and not self.endgame:
+            # if there are no missing pieces, but we have already downloaded
+            # some, we enter endgame mode
+            logging.info("Entering endgame mode")
+            self.endgame = True
+            self.piece_manager.endgame = True
+
     async def _on_block_retrieved(self, peer_id, piece_index, block_offset, data):
         """
             Callback function called by the `PeerConnection` when a block is
@@ -103,6 +120,12 @@ class TorrentClient:
         if index_piece is not None:
             for peer in self.peers:
                 await peer.send_have(index_piece)
+        if self.endgame:
+            for peer in self.peers:
+                await peer.send_cancel(piece_index, block_offset, len(data))
+        if self.piece_manager.complete:
+            self.endgame = False
+            self.piece_manager.endgame = False
 
 
 class Block:
@@ -153,6 +176,15 @@ class Piece:
         if missing:
             missing[0].status = Block.Pending
             return missing[0]
+        return None
+
+    def next_request_endgame(self) -> Optional[Block]:
+        """
+            Get the next Block to be requested in the endgame
+        """
+        pending = [b for b in self.blocks if b.status in (Block.Pending, Block.Missing)]
+        if pending:
+            return pending[0]
         return None
 
     def block_received(self, offset: int, data: bytes):
@@ -220,6 +252,7 @@ class PieceManager:
         self.total_pieces = len(torrent.pieces)
         self._bytes_uploaded = 0
         self.fd = os.open(self.torrent.output_file, os.O_RDWR | os.O_CREAT)
+        self.endgame = False
 
     def _initiate_pieces(self) -> List[Piece]:
         """
@@ -356,6 +389,11 @@ class PieceManager:
         # 3. Check if this peer have any of the missing pieces not yet started
         if peer_id not in self.peers:
             return None
+        if self.endgame:
+            # in endgame everybody requests the same piece
+            block = self._get_endgame_block(peer_id)
+            return block
+
         block = self._expired_requests(peer_id)
         if block:
             return block
@@ -379,6 +417,16 @@ class PieceManager:
             else:
                 return None
         return block
+
+    def _get_endgame_block(self, peer_id):
+        """
+            Select a block to request in the endgame
+        """
+        for piece in self.ongoing_pieces:
+            if self.peers[peer_id][piece.index]:
+                # is there any block left to request in this piece?
+                block = piece.next_request_endgame()
+                return block
 
     def peer_has_missing_pieces(self, peer_id):
         """
