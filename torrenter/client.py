@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import random
 import logging
 from typing import Optional, List
 import asyncio
@@ -356,14 +357,27 @@ class PieceManager:
         if peer_id not in self.peers:
             return None
         block = self._expired_requests(peer_id)
-        if not block:
+        if block:
+            return block
+        else:
             block = self._next_ongoing(peer_id)
-            if not block:
-                rare_piece = self._get_rarest_piece(peer_id)
-                if rare_piece:
-                    block = rare_piece.next_request()
-                else:
-                    return None
+
+        if block:
+            return block
+        elif not self.have_pieces:
+            # when  the download starts we pick a piece at random to get
+            # a complete piece as fast as possible
+            piece = self._get_random_piece(peer_id)
+            if piece:
+                block = piece.next_request()
+            if block:
+                return block
+        else:
+            rare_piece = self._get_rarest_piece(peer_id)
+            if rare_piece:
+                block = rare_piece.next_request()
+            else:
+                return None
         return block
 
     def block_received(self, peer_id, piece_index, block_offset, data):
@@ -449,9 +463,27 @@ class PieceManager:
         if not piece_count:
             return None
         rarest_piece = min(piece_count, key=lambda p: piece_count[p])
+        most_common_piece = max(piece_count, key=lambda p: piece_count[p])
+        logging.debug(f"Rarest piece found is {rarest_piece.index} with peer {peer_id} with {piece_count[rarest_piece]} occurences, most common one is {most_common_piece.index}, with {piece_count[most_common_piece]} occurences")
         self.missing_pieces.remove(rarest_piece)
         self.ongoing_pieces.append(rarest_piece)
         return rarest_piece
+
+    def _get_random_piece(self, peer_id):
+        """
+            Get a random piece, this should only be called when the download
+            has just started
+        """
+        bitfield = self.peers[peer_id]
+        if not sum(bitfield):
+            # peer has nothing
+            return None
+        pieces = [p for p in self.missing_pieces if bitfield[p.index]]
+        piece = random.choice(pieces)
+        logging.debug(f"Selecting piece {piece.index} at random")
+        self.missing_pieces.remove(piece)
+        self.ongoing_pieces.append(piece)
+        return piece
 
     def _next_missing(self, peer_id) -> Optional[Block]:
         """
