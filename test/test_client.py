@@ -3,7 +3,7 @@ import unittest
 from bitstring import BitArray
 
 from . import no_logging
-from torrenter.client import Piece, Block, PieceManager
+from torrenter.client import Piece, Block, PieceManager, REQUEST_SIZE
 from torrenter.torrent import Torrent
 
 
@@ -62,3 +62,12 @@ class PieceManagerTests(unittest.TestCase):
         self.assertTrue(self.piece_manager.peers[peer_id][0])
         self.assertFalse(self.piece_manager.peers[peer_id][1])
         self.assertFalse(self.piece_manager.peers[peer_id][2])
+
+    def test_blocks_torrent_size_multiple_request_size(self):
+        torrent = Torrent("test/data/debian-edu-10.10.0-amd64-netinst.iso.torrent")
+        piece_manager = PieceManager(torrent)
+        self.assertTrue(len(piece_manager.missing_pieces), 1624)
+        self.assertTrue(piece_manager.missing_pieces[-1].index, 1623)
+        self.assertTrue(len(piece_manager.missing_pieces[-1].blocks), 16)
+        for b in piece_manager.missing_pieces[-1].blocks:
+            self.assertTrue(b.length, REQUEST_SIZE)

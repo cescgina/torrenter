@@ -229,17 +229,15 @@ class PieceManager:
         pieces = []
         total_pieces = len(self.torrent.pieces)
         std_piece_blocks = math.ceil(self.torrent.piece_length / REQUEST_SIZE)
+        size_allocated = 0
         for index, hash_value in enumerate(self.torrent.pieces):
             # The number of blocks for each piece can be calculated using the
             # request size as divisor for the piece length
             # The final piece, however, will most likely have fewer blocks than
             # regular pieces, and that final block might be smaller than the
             # other blocks
-            if index < (total_pieces-1):
-                blocks = [Block(index, offset*REQUEST_SIZE, REQUEST_SIZE) for
-                        offset in range(std_piece_blocks)]
-            else:
-                last_length = self.torrent.total_size % self.torrent.piece_length
+            if index == (total_pieces-1):
+                last_length = self.torrent.total_size - size_allocated
                 num_blocks = math.ceil(last_length / REQUEST_SIZE)
                 blocks = [Block(index, offset * REQUEST_SIZE, REQUEST_SIZE) for
                         offset in range(num_blocks)]
@@ -248,6 +246,10 @@ class PieceManager:
                     # last block of the last piece might be smaller than the
                     # ordinary request size
                     blocks[-1].length = last_length % REQUEST_SIZE
+            else:
+                size_allocated += std_piece_blocks*REQUEST_SIZE
+                blocks = [Block(index, offset*REQUEST_SIZE, REQUEST_SIZE) for
+                        offset in range(std_piece_blocks)]
             pieces.append(Piece(hash_value, index, blocks))
         return pieces
 

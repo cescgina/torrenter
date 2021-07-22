@@ -181,6 +181,8 @@ class PeerConnection:
         """
         logging.info(f"Closing peer {self.remote_id}")
         self.active = False
+        if self.remote_id is not None:
+            self.piece_manager.remove_peer(self.remote_id)
         if not self.future.done():
             logging.debug(f"Cancelling future for peer {self.remote_id}")
             self.future.cancel()
@@ -242,7 +244,7 @@ class PeerConnection:
         if block:
             message = Request(block.piece, block.offset, block.length)
 
-            logging.debug(f"Requesting block {block.piece} for piece {block.offset} of {block.length} bytes from peer {self.remote_id}")
+            logging.debug(f"Requesting block {block.offset} for piece {block.piece} of {block.length} bytes from peer {self.remote_id}")
 
             self.writer.write(message.encode())
             await self.writer.drain()
