@@ -185,6 +185,8 @@ class PeerConnection:
             self.piece_manager.remove_peer(self.remote_id)
         if not self.future.done():
             logging.debug(f"Cancelling future for peer {self.remote_id}")
+            # retrieve exception to aviod log cluttering
+            self.future.exception()
             self.future.cancel()
         if self.writer:
             self.writer.close()

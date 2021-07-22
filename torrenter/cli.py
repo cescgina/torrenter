@@ -36,10 +36,11 @@ def main():
         logging.info("Exiting, please wait until everything is shutdown...")
         client.stop()
         task.cancel()
+        loop.stop()
 
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        loop.run_until_complete(task)
+        loop.run_forever()
     except CancelledError:
         logging.warning("Event loop was cancelled")
