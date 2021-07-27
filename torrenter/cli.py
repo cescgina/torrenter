@@ -36,6 +36,9 @@ def main():
         logging.info("Exiting, please wait until everything is shutdown...")
         client.stop()
         task.cancel()
+        pending = asyncio.Task.all_tasks()
+        # ensure that all tasks are finished when we stop the loop
+        loop.run_until_complete(asyncio.gather(*pending))
         loop.stop()
 
     signal.signal(signal.SIGINT, signal_handler)

@@ -29,12 +29,14 @@ class PeerConnection:
 	the next available peer from off the queue and try to connect to that one
 	instead.
     """
-    def __init__(self, queue: Queue, info_hash, peer_id, piece_manager,
+    def __init__(self, id_value, queue: Queue, info_hash, peer_id, piece_manager,
                 on_block_cb=None, on_block_request=None):
         """
 	    Constructs a PeerConnection and add it to the asyncio event-loop.
 	    Use `stop` to abort this connection and any subsequent connection
 	    attempts
+            :param id_value: Numeric id to identify different PeerConnection
+            objects
 	    :param queue: The async Queue containing available peers
 	    :param info_hash: The SHA1 hash for the meta-data's info
 	    :param peer_id: Our peer ID used to to identify ourselves
@@ -45,6 +47,7 @@ class PeerConnection:
             :param on_block_request: The callback function to call when a block
                 request is send, allows to set the client in end-game mode
         """
+        self.id = id_value
         self.my_state = []
         self.peer_state = []
         self.queue = queue
@@ -56,7 +59,7 @@ class PeerConnection:
         self.piece_manager = piece_manager
         self.on_block_cb = on_block_cb
         self.on_block_request = on_block_request
-        self.future = asyncio.ensure_future(self._start())  # Start this worker
+        self.future = asyncio.ensure_future(self.wrap_worker())  # Start this worker
         self.ip = None
         self.port = None
         self.active = False
@@ -67,13 +70,26 @@ class PeerConnection:
     def is_interested_peer(self):
         return "choked" not in self.peer_state and "interested" in self.peer_state
 
+    async def wrap_worker(self):
+        try:
+            await self._start()
+        except CancelledError as e:
+            if not self.future.done():
+                self.future.cancel()
+            logging.debug(f"Caught exception {e} in closing connection {self.id}")
+            raise e
+
     async def _start(self):
         while 'stopped' not in self.my_state:
-            ip, port, id_peer = await self.queue.get()
-            logging.info(f"Got assigned peer with ip {ip} and port {port}")
+            try:
+                ip, port, id_peer = await self.queue.get()
+                logging.info(f"Got assigned peer with ip {ip} and port {port}")
+            except CancelledError as e:
+                logging.debug(f"PeerConnection was cancelled while waiting in the queue for an address, connection {self.id}")
+                raise e
 
             try:
-                logging.debug(f"Attempting to connect to peer: {ip} using port {port}")
+                logging.debug(f"Attempting to connect to peer: {ip} using port {port}, connection {self.id}")
                 self.ip = ip
                 self.port = port
                 self.remote_id = None
@@ -84,7 +100,7 @@ class PeerConnection:
                 buffer = await self._handshake(id_peer)
                 self.active = True
 
-                logging.debug(f"Peer with ip {self.ip} is {self.remote_id}")
+                logging.debug(f"Peer with ip {self.ip} is {self.remote_id}, connection {self.id}")
                 # Sending bitfield is options and not needed when client does not
                 # have any pieces. Thus we do not send any bitfield message
                 bitfield = self.piece_manager.bitfield
@@ -111,31 +127,31 @@ class PeerConnection:
                     if message == 0:
                         await self._send_keepalive()
                     elif type(message) is BitField:
-                        logging.debug(f"Received BitField message from peer {self.remote_id}, with {sum(message.bitfield)} pieces")
+                        logging.debug(f"Received BitField message from peer {self.remote_id}, with {sum(message.bitfield)} pieces, connection {self.id}")
                         self.piece_manager.add_peer(self.remote_id, message.bitfield)
                     elif type(message) is Interested:
-                        logging.debug(f"Received Interested message from peer {self.remote_id}")
+                        logging.debug(f"Received Interested message from peer {self.remote_id}, connection {self.id}")
                         self.peer_state.append('interested')
                     elif type(message) is NotInterested:
-                        logging.debug(f"Received NotInterested message from peer {self.remote_id}")
+                        logging.debug(f"Received NotInterested message from peer {self.remote_id}, connection {self.id}")
                         if 'interested' in self.peer_state:
                             self.peer_state.remove('interested')
                     elif type(message) is Choke:
                         self.my_state.append("choked")
-                        logging.debug(f"Received Choke message from peer {self.remote_id}")
+                        logging.debug(f"Received Choke message from peer {self.remote_id}, connection {self.id}")
                     elif type(message) is Unchoke:
-                        logging.debug(f"Received Unchoke message from peer {self.remote_id}")
+                        logging.debug(f"Received Unchoke message from peer {self.remote_id}, connection {self.id}")
                         if "choked" in self.my_state:
                             self.my_state.remove("choked")
                     elif type(message) is Have:
-                        logging.debug(f"Received Have message, index {message.index} from peer {self.remote_id}")
+                        logging.debug(f"Received Have message, index {message.index} from peer {self.remote_id}, connection {self.id}")
                         self.piece_manager.update_peer(self.remote_id,
                                 message.index)
                     elif type(message) is KeepAlive:
-                        logging.debug(f"Received KeepAlive message from peer {self.remote_id}")
+                        logging.debug(f"Received KeepAlive message from peer {self.remote_id}, connection {self.id}")
                         pass
                     elif type(message) is Piece:
-                        logging.debug(f"Received Piece message from peer {self.remote_id}")
+                        logging.debug(f"Received Piece message from peer {self.remote_id}, connection {self.id}")
                         self.my_state.remove("pending_request")
                         await self.on_block_cb(
                                 peer_id=self.remote_id, 
@@ -143,12 +159,12 @@ class PeerConnection:
                                 block_offset=message.begin,
                                 data=message.block)
                     elif type(message) is Request:
-                        logging.debug(f"Received Request message from peer {self.remote_id}")
+                        logging.debug(f"Received Request message from peer {self.remote_id}, connection {self.id}")
                         if self.is_interested_peer():
                             await self._send_piece(message.index, message.begin,
                                              message.length)
                     elif type(message) is Cancel:
-                        logging.debug(f"Received Cancel message from peer {self.remote_id}")
+                        logging.debug(f"Received Cancel message from peer {self.remote_id}, connection {self.id}")
                         #TODO Add support for sending data
                         logging.info("Ignoring the received Cancel message")
 
@@ -163,10 +179,10 @@ class PeerConnection:
             except (ConnectionRefusedError, TimeoutError):
                 logging.exception(f"Unable to connect to peer at ip {self.ip}")
             except (ConnectionResetError, CancelledError) as err:
-                logging.warning(f"Connection to {self.remote_id} closed, due to error {err}")
+                logging.warning(f"Connection to {self.remote_id} closed, due to error {err}, connection {self.id}")
             except Exception as e:
                 self.cancel()
-                logging.exception(f"An error occurred with peer {self.remote_id}")
+                logging.exception(f"An error occurred with peer {self.remote_id}, connection {self.id}")
                 raise e
             self.cancel()
             # self.enqueue()
@@ -176,7 +192,7 @@ class PeerConnection:
         """
             Re-enqueue the current address of the peer
         """
-        logging.debug(f"Adding again peer {self.remote_id} to the queue")
+        logging.debug(f"Adding again peer {self.remote_id} to the queue, connection {self.id}")
         self.queue.put_nowait((self.ip, self.port))
 
     def cancel(self):
@@ -188,12 +204,12 @@ class PeerConnection:
         self.active = False
         if self.remote_id is not None:
             self.piece_manager.remove_peer(self.remote_id)
-        if not self.future.done():
-            logging.debug(f"Cancelling future for peer {self.remote_id}")
-            self.future.cancel()
         if self.future.done():
             # retrieve exception to avoid log cluttering
             self.future.exception()
+        if not self.future.done():
+            logging.debug(f"Cancelling future for peer {self.remote_id}, connection {self.id}")
+            self.future.cancel()
         if self.writer:
             self.writer.close()
 
@@ -218,6 +234,8 @@ class PeerConnection:
         # cancel
         self.my_state.append("stopped")
         self.active = False
+        if self.future.done():
+            self.future.exception()
         if not self.future.done():
             self.future.cancel()
 
@@ -225,7 +243,7 @@ class PeerConnection:
         if "choked" in self.peer_state:
             self.peer_state.remove("choked")
         message = Unchoke()
-        logging.debug(f"Send Unchoke message to peer {self.remote_id}")
+        logging.debug(f"Send Unchoke message to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -233,7 +251,7 @@ class PeerConnection:
         if not self.active:
             return
         message = Have(index)
-        logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}")
+        logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -241,7 +259,7 @@ class PeerConnection:
         if not self.active:
             return
         message = Cancel(index, begin, length)
-        logging.debug(f"Send Cancel message for piece {index}, block {begin} to peer {self.remote_id}")
+        logging.debug(f"Send Cancel message for piece {index}, block {begin} to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -251,7 +269,7 @@ class PeerConnection:
         assert len(block.data) == length
         if block:
             message = Piece(index, begin, block.data)
-            logging.debug(f"Sending block {begin} of piece {index} to peer {self.remote_id}")
+            logging.debug(f"Sending block {begin} of piece {index} to peer {self.remote_id}, connection {self.id}")
             self.piece_manager.uploaded_bytes(length)
             self.writer.write(message.encode())
             await self.writer.drain()
@@ -261,29 +279,29 @@ class PeerConnection:
         if block:
             message = Request(block.piece, block.offset, block.length)
 
-            logging.debug(f"Requesting block {block.offset} for piece {block.piece} of {block.length} bytes from peer {self.remote_id}")
+            logging.debug(f"Requesting block {block.offset} for piece {block.piece} of {block.length} bytes from peer {self.remote_id}, connection {self.id}")
 
             self.writer.write(message.encode())
             await self.writer.drain()
         else:
             missing, ongoing = self.piece_manager.peer_has_missing_pieces(self.remote_id)
-            logging.debug(f"Peer {self.remote_id} has no available block for us")
+            logging.debug(f"Peer {self.remote_id} has no available block for us, connection {self.id}")
             if missing:
                 # this should never happen
-                logging.debug(f"Peer {self.remote_id} has a missing piece, but it was not selected")
+                logging.debug(f"Peer {self.remote_id} has a missing piece, but it was not selected, connection {self.id}")
             if ongoing:
-                logging.debug(f"Peer {self.remote_id} has an ongoing piece, but it was not selected")
+                logging.debug(f"Peer {self.remote_id} has an ongoing piece, but it was not selected, connection {self.id}")
             #TODO: should we send a NotInterested message here?
 
     async def _send_bitfield(self, bitfield):
         message = BitField(bitfield)
-        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
     async def _send_keepalive(self):
         message = KeepAlive()
-        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 
@@ -313,7 +331,7 @@ class PeerConnection:
         if id_peer:
             assert id_peer == response.peer_id, f"peer_id {id_peer} does not match the id from the response {response.peer_id}"
         self.remote_id = response.peer_id
-        logging.debug(f"peer_id {self.peer_id} received {response.peer_id}")
+        logging.debug(f"peer_id {self.peer_id} received {response.peer_id}, connection {self.id}")
         logging.info("Handshake with peer was successful")
 
         # We need to return the remaining buffer data, since we might have read
@@ -323,7 +341,7 @@ class PeerConnection:
 
     async def _send_interested(self):
         message = Interested()
-        logging.debug(f"Sending message: {message} to peer {self.remote_id}")
+        logging.debug(f"Sending message: {message} to peer {self.remote_id}, connection {self.id}")
         self.writer.write(message.encode())
         await self.writer.drain()
 

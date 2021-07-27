@@ -37,13 +37,13 @@ class TorrentClient:
         self.endgame = False
 
     async def start(self):
-        self.peers = [PeerConnection(self.available_peers, 
+        self.peers = [PeerConnection(i, self.available_peers, 
             self.tracker.torrent.info_hash,
             self.tracker.id,
             self.piece_manager,
             self._on_block_retrieved,
             self._on_request_send)
-            for _ in range(MAX_PEER_CONNECTIONS)]
+            for i in range(MAX_PEER_CONNECTIONS)]
         # The time we last made an announce call (timestamp)
         previous = None
         # Default interval between announce calls (in seconds)
