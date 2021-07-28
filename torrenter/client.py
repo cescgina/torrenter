@@ -500,6 +500,8 @@ class PieceManager:
                     complete = (self.total_pieces - len(self.missing_pieces)
                             - len(self.ongoing_pieces))
                     logging.info(f"{complete} / {self.total_pieces} pieces downloaded {100*complete/self.total_pieces:.2f} %")
+                    if complete == self.total_pieces:
+                        logging.info("Download completed!!")
                     return piece.index
                 else:
                     logging.info(f"Discarding corrupt piece {index}")
