@@ -254,6 +254,7 @@ class PieceManager:
         self._bytes_uploaded = 0
         self.fd = os.open(self.torrent.output_file, os.O_RDWR | os.O_CREAT)
         self.endgame = False
+        self._check_previous_download()
 
     def _initiate_pieces(self) -> List[Piece]:
         """
@@ -287,6 +288,30 @@ class PieceManager:
                         offset in range(std_piece_blocks)]
             pieces.append(Piece(hash_value, index, blocks))
         return pieces
+
+    def _check_previous_download(self):
+        """
+            Check if there is a previous download for the torrent and resume it
+            if it exists
+        """
+        # read all existing blocks and put them on have_pieces
+        found_pieces = 0
+        for piece in self.missing_pieces:
+            pos = piece.index * self.torrent.piece_length
+            os.lseek(self.fd, pos, os.SEEK_SET)
+            data = os.read(self.fd, self.torrent.piece_length)
+            if not data:
+                continue
+            # hash data and check if it's correct
+            piece_hash = sha1(data).digest()
+            if piece_hash == self.torrent.pieces[piece.index]:
+                found_pieces += 1
+                self.missing_pieces.remove(piece)
+                self.have_pieces.append(piece)
+
+        if found_pieces:
+            logging.info(f"Found {found_pieces} pieces from a previous download")
+
 
     def close(self):
         try:
