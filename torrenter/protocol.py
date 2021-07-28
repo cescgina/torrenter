@@ -59,10 +59,10 @@ class PeerConnection:
         self.piece_manager = piece_manager
         self.on_block_cb = on_block_cb
         self.on_block_request = on_block_request
-        self.future = asyncio.ensure_future(self.wrap_worker())  # Start this worker
         self.ip = None
         self.port = None
         self.active = False
+        self.future = asyncio.ensure_future(self.wrap_worker())  # Start this worker
 
     def are_interested(self):
         return "choked" not in self.my_state and "pending_request" not in self.my_state and "interested" in self.my_state
@@ -74,9 +74,7 @@ class PeerConnection:
         try:
             await self._start()
         except CancelledError as e:
-            if not self.future.done():
-                self.future.cancel()
-            logging.debug(f"Caught exception {e} in closing connection {self.id}")
+            self.cancel()
             raise e
 
     async def _start(self):
@@ -204,9 +202,6 @@ class PeerConnection:
         self.active = False
         if self.remote_id is not None:
             self.piece_manager.remove_peer(self.remote_id)
-        if self.future.done():
-            # retrieve exception to avoid log cluttering
-            self.future.exception()
         if not self.future.done():
             logging.debug(f"Cancelling future for peer {self.remote_id}, connection {self.id}")
             self.future.cancel()
@@ -234,8 +229,6 @@ class PeerConnection:
         # cancel
         self.my_state.append("stopped")
         self.active = False
-        if self.future.done():
-            self.future.exception()
         if not self.future.done():
             self.future.cancel()
 
