@@ -1,3 +1,4 @@
+import os
 from hashlib import sha1
 from collections import namedtuple
 from torrenter.bencoding import Decoder, Encoder
@@ -5,12 +6,13 @@ from torrenter.bencoding import Decoder, Encoder
 TorrentFile = namedtuple("TorrentFile", ["name", "length"])
 
 class Torrent:
-    def __init__(self, torrent_file):
+    def __init__(self, torrent_file, output_folder):
         self.torrent_file = torrent_file
         self._data = self._read_torrent()
         self.files = []
         self.info_hash = sha1(Encoder(self._data[b"info"]).encode()).digest()
         self.multi_file = None
+        self.output_folder = output_folder
         self._identify_files()
 
     def __str__(self):
@@ -71,5 +73,4 @@ class Torrent:
 
     @property
     def output_file(self):
-        return self._data[b"info"][b"name"].decode("utf-8")
-
+        return os.path.join(self.output_folder, self._data[b"info"][b"name"].decode("utf-8"))

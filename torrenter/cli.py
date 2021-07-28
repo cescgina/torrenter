@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import argparse
@@ -15,6 +16,8 @@ def main():
                         help="enable verbose output")
     parser.add_argument("-l", "--log", default=None,
                         help="Path of log file")
+    parser.add_argument("-o", "--output", default="",
+                        help="Path where to write the output")
 
     args = parser.parse_args()
     level_log = logging.INFO
@@ -27,8 +30,11 @@ def main():
     else:
         logging.basicConfig(level=level_log)
 
+    if args.output:
+        os.makedirs(args.output, exist_ok=True)
+
     loop = asyncio.get_event_loop()
-    client = TorrentClient(Torrent(args.torrent))
+    client = TorrentClient(Torrent(args.torrent, args.output))
     task = loop.create_task(client.start())
 
     try:
