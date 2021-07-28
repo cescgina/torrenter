@@ -465,6 +465,8 @@ class PieceManager:
             Returns two bools, whether it has any missing pieces and whether it
             has any ongoing pieces
         """
+        if peer_id not in self.peers:
+            return None
         missing = [self.peers[peer_id][p.index] for p in self.missing_pieces]
         ongoing = [self.peers[peer_id][p.index] for p in self.ongoing_pieces]
         return any(missing), any(ongoing)

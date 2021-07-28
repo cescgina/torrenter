@@ -284,7 +284,11 @@ class PeerConnection:
             self.writer.write(message.encode())
             await self.writer.drain()
         else:
-            missing, ongoing = self.piece_manager.peer_has_missing_pieces(self.remote_id)
+            response = self.piece_manager.peer_has_missing_pieces(self.remote_id)
+            if response is None:
+                # peer is not registered in the piece_manager, probably did not send BitField
+                return
+            missing, ongoing = response
             logging.debug(f"Peer {self.remote_id} has no available block for us, connection {self.id}")
             if missing:
                 # this should never happen
