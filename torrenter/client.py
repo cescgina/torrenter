@@ -157,10 +157,12 @@ class Piece:
 	to as `Block` by the unofficial specification (the official specification
 	uses piece for this one as well, which is slightly confusing).
     """
-    def __init__(self, hash_value, index: int, blocks: list = []):
+    def __init__(self, hash_value, index: int, blocks: list = [], files: list = []):
         self.index = index
         self.blocks = blocks
         self.hash = hash_value
+        # list of tuples containing (index of file, size of the file in the piece)
+        self.files = files
 
     def reset(self):
         """
@@ -252,7 +254,7 @@ class PieceManager:
         self.missing_pieces = self._initiate_pieces()
         self.total_pieces = len(torrent.pieces)
         self._bytes_uploaded = 0
-        self.fd = os.open(self.torrent.output_file, os.O_RDWR | os.O_CREAT)
+        self.fds = [os.open(filename, os.O_RDWR | os.O_CREAT) for filename in self.torrent.output_files]
         self.endgame = False
         self._check_previous_download()
 
@@ -261,11 +263,11 @@ class PieceManager:
             Pre-construct the list of pieces and blocks based on the number of
             pieces and request size for this torrent
         """
-        #TODO: adapt this for multiple files
         pieces = []
         total_pieces = len(self.torrent.pieces)
         std_piece_blocks = math.ceil(self.torrent.piece_length / REQUEST_SIZE)
         size_allocated = 0
+        limits = [(i, f.offset, f.length) for i, f in enumerate(self.torrent.files)]
         for index, hash_value in enumerate(self.torrent.pieces):
             # The number of blocks for each piece can be calculated using the
             # request size as divisor for the piece length
@@ -274,6 +276,8 @@ class PieceManager:
             # other blocks
             if index == (total_pieces-1):
                 last_length = self.torrent.total_size - size_allocated
+                files_list = calculates_files_in_piece(limits, size_allocated, 
+                                                       self.torrent.total_size)
                 num_blocks = math.ceil(last_length / REQUEST_SIZE)
                 blocks = [Block(index, offset * REQUEST_SIZE, REQUEST_SIZE) for
                         offset in range(num_blocks)]
@@ -283,10 +287,14 @@ class PieceManager:
                     # ordinary request size
                     blocks[-1].length = last_length % REQUEST_SIZE
             else:
+                start_piece = size_allocated
+                end_piece = start_piece+std_piece_blocks*REQUEST_SIZE
+                files_list = calculates_files_in_piece(limits, start_piece, end_piece)
+
                 size_allocated += std_piece_blocks*REQUEST_SIZE
                 blocks = [Block(index, offset*REQUEST_SIZE, REQUEST_SIZE) for
                         offset in range(std_piece_blocks)]
-            pieces.append(Piece(hash_value, index, blocks))
+            pieces.append(Piece(hash_value, index, blocks=blocks, files=files_list))
         return pieces
 
     def _check_previous_download(self):
@@ -294,6 +302,7 @@ class PieceManager:
             Check if there is a previous download for the torrent and resume it
             if it exists
         """
+        # TODO: adapt for multi-file
         # read all existing blocks and put them on have_pieces
         found_pieces = 0
         for piece in self.missing_pieces:
@@ -315,7 +324,8 @@ class PieceManager:
 
     def close(self):
         try:
-            os.close(self.fd)
+            for fd in self.fds:
+                os.close(fd)
         except OSError as e:
             # catch and ignore Bad file descriptor error when closing
             if e.errno != errno.EBADF:
@@ -494,7 +504,10 @@ class PieceManager:
             piece.block_received(block_offset, data)
             if piece.is_complete():
                 if piece.is_hash_matching():
-                    self._write(piece)
+                    if self.torrent.multi_file:
+                        self._write_multi_file(piece)
+                    else:
+                        self._write(piece)
                     self.ongoing_pieces.remove(piece)
                     self.have_pieces.append(piece)
                     complete = (self.total_pieces - len(self.missing_pieces)
@@ -597,10 +610,49 @@ class PieceManager:
                 return piece.next_request()
         return None
 
+    def _write_multi_file(self, piece):
+        """
+            Write the given piece to disk for a multi-file torrent 
+        """
+        data_used = 0
+        for file_index, data_size in piece.files:
+            fd = self.fds[file_index]
+            data = piece.data[data_used:data_size]
+            data_used = data_size
+            if self.torrent.files[file_index].pieces == 1:
+                # the whole file fits in one piece, simple case
+                pos = 0
+            else:
+                # in piece index is 0, we start at the beginning of the file
+                pos = min(piece.index * self.torrent.piece_length - self.torrent.files[file_index].offset, 0)
+            os.lseek(fd, pos, os.SEEK_SET)
+            os.write(fd, data)
+                
+
+
     def _write(self, piece):
         """
             Write the given piece to disk
         """
         pos = piece.index * self.torrent.piece_length
-        os.lseek(self.fd, pos, os.SEEK_SET)
-        os.write(self.fd, piece.data)
+        os.lseek(self.fds[0], pos, os.SEEK_SET)
+        os.write(self.fds[0], piece.data)
+
+def calculates_files_in_piece(files_limits, start, end):
+    """
+        Calculate which files belong to a specific piece and their sizes
+    """
+    files = []
+    to_remove = []
+    for i, (f, offset, length) in enumerate(files_limits):
+        if start >= offset and end >= (offset+length):
+            # whole file f fits in this piece
+            files.append((f, length))
+            start += length
+            to_remove.append(i)
+        elif start >= offset and end < (offset+length):
+            # file starts here, but goes beyond this piece
+            files.append((f, end-start))
+    for index in to_remove[::-1]:
+        files_limits.pop(index)
+    return files

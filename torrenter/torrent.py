@@ -1,12 +1,13 @@
 import os
+from math import ceil
 from hashlib import sha1
 from collections import namedtuple
 from torrenter.bencoding import Decoder, Encoder
 
-TorrentFile = namedtuple("TorrentFile", ["name", "length"])
+TorrentFile = namedtuple("TorrentFile", ["name", "length", "pieces", "offset"])
 
 class Torrent:
-    def __init__(self, torrent_file, output_folder):
+    def __init__(self, torrent_file, output_folder=""):
         self.torrent_file = torrent_file
         self._data = self._read_torrent()
         self.files = []
@@ -40,10 +41,12 @@ class Torrent:
             files_dict = [files]
             self.multi_file = False
 
+        offset = 0
         for f in files_dict:
             name = f[b"name"].decode("utf-8")
             length = f[b"length"]
-            self.files.append(TorrentFile(name, length))
+            self.files.append(TorrentFile(name, length, ceil(length/self.piece_length), offset))
+            offset += length
 
     @property
     def announce(self) -> str:
@@ -72,5 +75,6 @@ class Torrent:
         return pieces
 
     @property
-    def output_file(self):
-        return os.path.join(self.output_folder, self._data[b"info"][b"name"].decode("utf-8"))
+    def output_files(self):
+        return [os.path.join(self.output_folder, file_torrent.name) for
+                file_torrent in self.files]
