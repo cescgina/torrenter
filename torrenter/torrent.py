@@ -14,12 +14,15 @@ class Torrent:
         self.info_hash = sha1(Encoder(self._data[b"info"]).encode()).digest()
         self.multi_file = None
         self.output_folder = output_folder
+        self.announce_list = []
+        for tier in self._data[b"announce-list"]:
+            self.announce_list.extend(tier)
         self._identify_files()
 
     def __str__(self):
         filename = self._data[b'info'][b'name']
         file_len = self._data[b'info'][b'length']
-        announce_url = self._data[b'announce']
+        announce_url = self.announce
 
         return f"Filename: {filename}\nFile length: {file_len}\n" \
                 "Announce URL: {announce_url}\nHash: {self.info_hash}"
@@ -50,7 +53,14 @@ class Torrent:
 
     @property
     def announce(self) -> str:
-        return self._data[b"announce"].decode("utf-8")
+        return self.announce_list[0].decode("utf-8")
+
+    def demote_tracker(self):
+        """
+            Put the current tracker at the end of the list
+        """
+        current_tracker = self.announce_list.pop(0)
+        self.announce_list.append(current_tracker)
 
     @property
     def piece_length(self) -> int:
