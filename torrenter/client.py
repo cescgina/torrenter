@@ -50,15 +50,22 @@ class TorrentClient:
         interval = 30*60
 
         while True:
-            if self.piece_manager.complete or self.abort:
+            if self.abort:
                 break
 
             current = time.time()
             if (not previous) or (previous + interval < current):
-                response = await self.tracker.connect(
-                        first = True if previous else False, 
-                        uploaded=self.piece_manager.bytes_uploaded,
-                        downloaded=self.piece_manager.bytes_downloaded)
+                logging.debug(f"Asking tracker {self.torrent.announce} for peers")
+                try:
+                    response = await self.tracker.connect(
+                            first = True if previous else False,
+                            uploaded=self.piece_manager.bytes_uploaded,
+                            downloaded=self.piece_manager.bytes_downloaded)
+                except ConnectionError as e:
+                    logging.exception(f"Could not connect to tracker {e}")
+                    self.torrent.demote_tracker()
+                    await asyncio.sleep(5)
+                    continue
                 if response:
                     logging.debug(f"Got response from tracker, with {len(response.peers)} peers and interval of {response.interval}")
                     previous = current
@@ -73,6 +80,8 @@ class TorrentClient:
 
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
+                else:
+                    logging.warning("Got a failure from tracker, reason {response.failure}")
             else:
                 logging.debug(f"Have to wait {(previous+interval)-current} seconds for next ping to tracker")
                 await asyncio.sleep(5)
