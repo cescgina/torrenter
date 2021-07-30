@@ -1,3 +1,5 @@
+import os
+import glob
 import unittest
 
 from bitstring import BitArray
@@ -73,6 +75,14 @@ class PieceManagerTests(unittest.TestCase):
         for b in piece_manager.missing_pieces[-1].blocks:
             self.assertTrue(b.length, REQUEST_SIZE)
 
+    def tearDown(self):
+        files = glob.glob("*.iso")
+        try:
+            for fname in files:
+                os.remove(fname)
+        except OSError as why:
+            print(why)
+
 class MultiFileContentsPieceTest(unittest.TestCase):
     def setUp(self):
         self.limits = [(0, 0, 41), (1, 41, 1108), (2, 1149, 380672528)]
@@ -103,11 +113,13 @@ class MultiFileContentsTorrentTest(unittest.TestCase):
         piece_length = 8388608
         golden_first = [(0, 41), (1, 1108), (2, 8387459)]
         golden = [(2, piece_length)]
-        for piece in self.piece_manager.missing_pieces:
+        for piece in self.piece_manager.missing_pieces[:-1]:
             if piece.index == 0:
                 self.assertEqual(golden_first, piece.files)
             else:
                 self.assertEqual(golden, piece.files)
+        golden_last = [(2, 3186317)]
+        self.assertEqual(golden_last, self.piece_manager.missing_pieces[-1].files)
 
     def test_torrent_multi_file_files(self):
         golden = [TorrentFile('Download more at www.ettvcentral.com .txt', 41, 1, 0),
@@ -117,3 +129,13 @@ class MultiFileContentsTorrentTest(unittest.TestCase):
 
     def test_torrent_multi_file_file_descrptors(self):
         self.assertEqual(3, len(self.piece_manager.fds))
+
+    def tearDown(self):
+        files = ['Download more at www.ettvcentral.com .txt', 
+                 'Rick.and.Morty.S05E06.XviD-AFG.nfo',
+                 'Rick.and.Morty.S05E06.XviD-AFG[ettv].avi']
+        try:
+            for fname in files:
+                os.remove(fname)
+        except OSError as why:
+            print(why)

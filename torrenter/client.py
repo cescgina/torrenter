@@ -240,6 +240,13 @@ class Piece:
         blocks_data = [b.data for b in retrieved]
         return b"".join(blocks_data)
 
+    @property
+    def size(self):
+        """
+            Return the full size of the piece, in bytes
+        """
+        return len(self.data)
+
 # The type used for keeping track of pending request that can be re-issued
 PendingRequest = namedtuple("PendingRequest", ["block", "added"])
 
@@ -275,6 +282,7 @@ class PieceManager:
         pieces = []
         total_pieces = len(self.torrent.pieces)
         std_piece_blocks = math.ceil(self.torrent.piece_length / REQUEST_SIZE)
+        size_piece = std_piece_blocks*REQUEST_SIZE
         size_allocated = 0
         limits = [(i, f.offset, f.length) for i, f in enumerate(self.torrent.files)]
         for index, hash_value in enumerate(self.torrent.pieces):
@@ -297,7 +305,7 @@ class PieceManager:
                     blocks[-1].length = last_length % REQUEST_SIZE
             else:
                 start_piece = size_allocated
-                end_piece = start_piece+std_piece_blocks*REQUEST_SIZE
+                end_piece = start_piece+size_piece
                 files_list = calculates_files_in_piece(limits, start_piece, end_piece)
 
                 size_allocated += std_piece_blocks*REQUEST_SIZE
@@ -315,13 +323,19 @@ class PieceManager:
         # read all existing blocks and put them on have_pieces
         found_pieces = 0
         for piece in self.missing_pieces:
-            pos = piece.index * self.torrent.piece_length
-            os.lseek(self.fd, pos, os.SEEK_SET)
-            data = os.read(self.fd, self.torrent.piece_length)
-            if not data:
+            data_buffer = b""
+            position_in_piece = 0
+            for file_index, data_size in piece.files:
+                fd = self.fds[file_index]
+                position_in_piece += data_size
+                pos = self.get_file_position_from_piece_position(piece.index, position_in_piece, file_index)
+                os.lseek(fd, pos, os.SEEK_SET)
+                data_buffer += os.read(fd, data_size)
+
+            if not data_buffer:
                 continue
             # hash data and check if it's correct
-            piece_hash = sha1(data).digest()
+            piece_hash = sha1(data_buffer).digest()
             if piece_hash == self.torrent.pieces[piece.index]:
                 found_pieces += 1
                 self.missing_pieces.remove(piece)
@@ -623,21 +637,30 @@ class PieceManager:
         """
             Write the given piece to disk for a multi-file torrent 
         """
-        data_used = 0
+        position_in_piece = 0
         for file_index, data_size in piece.files:
             fd = self.fds[file_index]
-            data = piece.data[data_used:data_size]
-            data_used = data_size
-            if self.torrent.files[file_index].pieces == 1:
-                # the whole file fits in one piece, simple case
-                pos = 0
-            else:
-                # in piece index is 0, we start at the beginning of the file
-                pos = min(piece.index * self.torrent.piece_length - self.torrent.files[file_index].offset, 0)
+            data = piece.data[position_in_piece:position_in_piece+data_size]
+            # we calculate the position in the file as the distance from
+            # the beginning byte of the file to the current position
+            pos = self.get_file_position_from_piece_position(piece.index, position_in_piece, file_index)
             os.lseek(fd, pos, os.SEEK_SET)
             os.write(fd, data)
+            position_in_piece += data_size
                 
 
+    def get_file_position_from_piece_position(self, piece_index, position_piece, index_file):
+        """
+            Translate the byte  coordinate in the piece to a position in the
+            corresponding file
+
+            :param piece_index: Index of the piece
+            :param position_piece: Coordinate in the piece of the bytes we are
+                working with, relative to the beginning of the current piece
+            :param index_file: Index of the file in the torrent.files list
+
+        """
+        return piece_index * self.torrent.piece_length + position_piece - self.torrent.files[index_file].offset
 
     def _write(self, piece):
         """
@@ -654,11 +677,16 @@ def calculates_files_in_piece(files_limits, start, end):
     files = []
     to_remove = []
     for i, (f, offset, length) in enumerate(files_limits):
-        if start >= offset and end >= (offset+length):
+        if start == offset and end >= (offset+length):
             # whole file f fits in this piece
             files.append((f, length))
             start += length
             to_remove.append(i)
+        elif start > offset and end == (offset+length):
+            # file started before, but consumes the whole piece
+            files.append((f, end-start))
+            to_remove.append(i)
+
         elif start >= offset and end < (offset+length):
             # file starts here, but goes beyond this piece
             files.append((f, end-start))
