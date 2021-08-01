@@ -81,7 +81,7 @@ class TorrentClient:
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
                 else:
-                    logging.warning("Got a failure from tracker, reason {response.failure}")
+                    logging.warning(f"Got a failure from tracker, reason {response.failure}")
             else:
                 logging.debug(f"Have to wait {(previous+interval)-current} seconds for next ping to tracker")
                 await asyncio.sleep(5)

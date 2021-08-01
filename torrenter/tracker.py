@@ -2,6 +2,7 @@ import time
 import socket
 import random
 import logging
+import asyncio
 from struct import unpack, pack
 from urllib.parse import urlencode, urlparse
 import aiohttp
@@ -202,14 +203,18 @@ class Tracker:
     def __init__(self, torrent):
         self.id = _calculate_peer_id()
         self.torrent = torrent
+        self.timeout = 60 # consider the tracker dead after a minute
 
     async def fetch_request(self, client, params):
         url = self.torrent.announce + "?" + urlencode(params)
-        async with client.get(url) as response:
-            if not response.status == 200:
-                raise ConnectionError("Unable to connect to tracker")
-            data = await response.read()
-            return TrackerResponse(bencoding.Decoder(data).decode())
+        try:
+            async with client.get(url, timeout=self.timeout) as response:
+                if not response.status == 200:
+                    raise ConnectionError("Unable to connect to tracker")
+                data = await response.read()
+                return TrackerResponse(bencoding.Decoder(data).decode())
+        except asyncio.TimeoutError:
+            raise ConnectionError(f"Connection to tracker {self.torrent.announce} timed-out")
 
     def fetch_request_udp(self, params):
         return UDPConnection(self.torrent.announce, params).connect()
