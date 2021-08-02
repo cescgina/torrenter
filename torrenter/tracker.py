@@ -84,91 +84,132 @@ class TrackerResponseUDP(TrackerResponse):
             response[b"peers"] = data[12:]
         super().__init__(response)
 
+class UDPTrackerProtocol(asyncio.Protocol):
+    def __init__(self, connection):
+        self.connection = connection
+        self.received_msg = None
+        self.connection_lost_recieved = asyncio.Event()
+        self.sent_msgs = {}
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def connection_lost(self, exc):
+        self.connection_lost_recieved.set()
+
+    def datagram_received(self, data, addr):
+        if len(data) < 8:
+            logging.warning("Invalid datagram received")
+            return
+
+        action, transaction_id = unpack(">II", data[:8])
+        if transaction_id in self.sent_msgs:
+            self.received_msg = (action, transaction_id, data[8:])
+            self.sent_msgs[transaction_id].set()
+        else:
+            logging.warning("Invalid transaction id received")
+
+    def error_received(self, exc):
+        logging.info(f"UDP client transmission error {exc}")
+
+    def get_transaction_id(self):
+        transaction_id = _get_random_32_integer()
+        while transaction_id in self.sent_msgs:
+            transaction_id = _get_random_32_integer()
+        self.sent_msgs[transaction_id] = asyncio.Event()
+        return transaction_id
+
+    async def send_msg(self, msg, transaction_id):
+        try:
+            self.transport.sendto(msg)
+            await asyncio.wait_for(self.sent_msgs[transaction_id].wait(),
+                                   timeout=self.connection.timeout)
+            self.sent_msgs.pop(transaction_id)
+        except asyncio.TimeoutError:
+            self.connection.is_timedout = True
+            self.sent_msgs.pop(transaction_id)
+            logging.warning("Connection to tracker timed out!")
+            return
+
 class UDPConnection:
     def __init__(self, url, params):
         self.params = params
+        self.url = url
         url_parsed = urlparse(url)
         self.address_tracker = url_parsed.hostname
         self.port_tracker = url_parsed.port
-        self.transaction_id = _get_random_32_integer()
-        self.attempts = 0
+        self.udp_magic_number = 0x41727101980
+        self.timeout = 15
+        self.max_retransmissions = 4
         self.start = time.time()
         self.connection_id = None
-        self.udp_magic_number = 0x41727101980
+        self.is_timedout = False
 
     def has_timed_out(self):
         """
             Check if the attempt has gone beyond 15 seconds
         """
-        return (time.time()-self.start) > 15
+        return self.is_timedout
 
-    def connect(self):
-        # each attempt has a timeout of 15, after a minute we stop trying
-        while self.attempts < 4:
-            self.start = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-                udp_socket.settimeout(15)
-                logging.debug(f"Trying to connect to udp tracker {self.address_tracker}:{self.port_tracker}, attempt {self.attempts+1}/4")
-                udp_socket.connect((self.address_tracker, self.port_tracker))
-                while True and not self.has_timed_out():
-                    try:
-                        self.send_connect_request(udp_socket)
-                        action, transaction_id_recv, extra_data = self.retrieve_connect_response(udp_socket)
-                    except socket.timeout:
-                        logging.warning("Connection to tracker timed out!")
-                        break
-                    if action == 3:
-                        return TrackerResponseUDP(extra_data, True)
-                    if transaction_id_recv == self.transaction_id and action == 0:
-                        logging.debug("Got connect response, announcing...")
-                        break
-                while True and not self.has_timed_out():
-                    try:
-                        self.send_announce_request(udp_socket)
-                        action, transaction_id_recv, data = self.retrieve_announce_response(udp_socket)
-                    except socket.timeout:
-                        logging.warning("Connection to tracker timed out!")
-                        break
-                    if action in (1, 3) and transaction_id_recv == self.transaction_id:
-                        logging.debug("Announce finished")
-                        return TrackerResponseUDP(data, action==3)
-                self.attempts += 1
-        raise ConnectionError("Unable to connect to tracker")
+    async def request(self):
+        loop = asyncio.get_event_loop()
+        self.transport, self.protocol = await loop.create_datagram_endpoint(
+                lambda: UDPTrackerProtocol(self),
+                remote_addr=(self.address_tracker, self.port_tracker))
+        for attempts in range(1, self.max_retransmissions+1):
+            self.is_timedout = False
+            logging.debug(f"Trying to connect to udp tracker {self.address_tracker}:{self.port_tracker}, attempt {attempts}/{self.max_retransmissions}")
+            while True and not self.has_timed_out():
+                error, success, extra_data = await self.connect()
+                if error:
+                    return TrackerResponseUDP(extra_data, True)
+                if success:
+                    logging.debug("Got connect response, announcing...")
+                    break
+            while True and not self.has_timed_out():
+                finished, action, data = await self.announce()
+                if finished:
+                    logging.debug("Announce finished")
+                    return TrackerResponseUDP(data, action==3)
+        raise ConnectionError(f"Unable to connect to tracker {self.url}")
 
-    def send_connect_request(self, socket_conn):
+    async def connect(self):
         """
             Send a connect request to the tracker
-
-            :param socket_conn: Socket to the tracker
         """
-        msg = pack(">QII", self.udp_magic_number, 0, self.transaction_id)
-        socket_conn.send(msg)
+        transaction_id = self.protocol.get_transaction_id()
+        msg = pack(">QII", self.udp_magic_number, 0,
+                transaction_id)
+        await self.protocol.send_msg(msg, transaction_id)
 
-    def retrieve_connect_response(self, socket_conn):
-        """
-            Retrieve a connect response from the tracker
+        if self.protocol.received_msg:
+            action, transaction_id_recv, data = self.protocol.received_msg
+            if action == 3:
+                # error
+                logging.warning(f"An error was received in reply to connect {data.decode()}")
+                data_extra = data
+                success = False
+            elif transaction_id_recv == transaction_id and action == 0:
+                logging.debug("Got successful connect response")
+                data_extra = None
+                success = True
+                self.connection_id = unpack(">Q", data)[0]
+            else:
+                logging.warning(f"Did not receive successful connect response action {action}, transaction id {transaction_id_recv} but sent {transaction_id}")
+                success = False
+                data_extra = None
+            return action == 3, success, data_extra
 
-            :param socket_conn: Socket to the tracker
-        """
-        data = socket_conn.recv(16)
-        if len(data) < 16:
-            return None, None, None
-        action, transaction_id_recv = unpack(">II", data[:8])
-        if action == 3:
-            # error
-            data_extra = data[8:]
         else:
-            data_extra = None
-            self.connection_id = unpack(">Q", data[8:])[0]
-        return action, transaction_id_recv, data_extra
+            logging.warning("Did not receive connect response")
+            return None, None, None
 
-    def send_announce_request(self, socket_conn):
+    async def announce(self):
         """
             Send announce request to the tracker
 
-            :param socket_conn: Socket to the tracker
         """
-        self.transaction_id = _get_random_32_integer()
+        transaction_id = self.protocol.get_transaction_id()
         key = _get_random_32_integer()
         info_hash = self.params["info_hash"]
         peer_id = self.params["peer_id"].encode()
@@ -180,23 +221,26 @@ class UDPConnection:
         num_want = -1
         event = ip_address = 0
         msg = pack(">QII20s20sQQQIIIiH", self.connection_id, 1,
-                   self.transaction_id, info_hash, peer_id,
+                   transaction_id, info_hash, peer_id,
                    downloaded, left, uploaded, event, ip_address,
                    key, num_want, listen_port)
-        socket_conn.send(msg)
+        await self.protocol.send_msg(msg, transaction_id)
 
-    def retrieve_announce_response(self, socket_conn):
-        """
-            Retrieve an announce response from tracker
-
-            :param socket_conn: Socket to the tracker
-        """
-        data = socket_conn.recv(1024)
-        if len(data) < 20:
+        if self.protocol.received_msg:
+            action, transaction_id_recv, data = self.protocol.received_msg
+            if action == 3:
+                logging.warning(f"An error was received in reply to announce {data.decode()}")
+                finished = True
+            elif transaction_id_recv == transaction_id and action == 1:
+                logging.debug("Got successful action response")
+                finished = True
+            else:
+                logging.warning(f"Did not receive successful announce response action {action}, transaction id {transaction_id_recv} but sent {transaction_id}")
+                finished = False
+            return action, finished, data
+        else:
+            logging.warning("Did not receive announce response")
             return None, None, None
-        action, transaction_id_recv = unpack(">II", data[:8])
-        return action, transaction_id_recv, data[8:]
-
 
 
 class Tracker:
@@ -206,18 +250,19 @@ class Tracker:
         self.timeout = 60 # consider the tracker dead after a minute
 
     async def fetch_request(self, client, params):
-        url = self.torrent.announce + "?" + urlencode(params)
+        url_tracker = self.torrent.announce
+        url = url_tracker + "?" + urlencode(params)
         try:
             async with client.get(url, timeout=self.timeout) as response:
                 if not response.status == 200:
-                    raise ConnectionError("Unable to connect to tracker")
+                    raise ConnectionError(f"Unable to connect to tracker {url_tracker}")
                 data = await response.read()
                 return TrackerResponse(bencoding.Decoder(data).decode())
         except asyncio.TimeoutError:
-            raise ConnectionError(f"Connection to tracker {self.torrent.announce} timed-out")
+            raise ConnectionError(f"Connection to tracker {url_tracker} timed-out")
 
-    def fetch_request_udp(self, params):
-        return UDPConnection(self.torrent.announce, params).connect()
+    async def fetch_request_udp(self, params):
+        return await UDPConnection(self.torrent.announce, params).request()
 
     async def connect(self, first: bool=None, uploaded: int=0, downloaded: int=0):
         params = {"info_hash": self.torrent.info_hash, "peer_id": self.id,
@@ -228,7 +273,7 @@ class Tracker:
             params["event"] = "started"
         if self.torrent.announce.startswith("udp"):
             # use udp protocol
-            return self.fetch_request_udp(params)
+            return await self.fetch_request_udp(params)
         else:
             async with aiohttp.ClientSession() as client:
                 return await self.fetch_request(client, params)

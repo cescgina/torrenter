@@ -62,7 +62,7 @@ class TorrentClient:
                             uploaded=self.piece_manager.bytes_uploaded,
                             downloaded=self.piece_manager.bytes_downloaded)
                 except ConnectionError as e:
-                    logging.exception(f"Could not connect to tracker {e}")
+                    logging.exception(f"{e}")
                     self.torrent.demote_tracker()
                     await asyncio.sleep(5)
                     continue
