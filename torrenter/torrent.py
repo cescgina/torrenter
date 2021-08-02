@@ -21,7 +21,9 @@ class Torrent:
                 self.announce_list.extend(tier)
         else:
             self.announce_list = [self._data[b"announce"]]
+        self.folders = set()
         self._identify_files()
+        self._create_subfolders()
 
     def __str__(self):
         filename = self._data[b'info'][b'name']
@@ -35,6 +37,10 @@ class Torrent:
         with open(self.torrent_file, "rb") as f:
             return Decoder(f.read()).decode()
 
+    def _create_subfolders(self):
+        for path in self.folders:
+            os.makedirs(os.path.join(self.output_folder, path))
+
     def _identify_files(self):
         files = self._data[b"info"]
         if b"files" in files:
@@ -43,7 +49,7 @@ class Torrent:
             self.multi_file = True
             for f in files_dict:
                 # provide a unified interface for both cases
-                f[b"name"] = b"".join(f[b"path"])
+                f[b"name"] = b"/".join(f[b"path"])
         else:
             files_dict = [files]
             self.multi_file = False
@@ -51,6 +57,10 @@ class Torrent:
         offset = 0
         for f in files_dict:
             name = f[b"name"].decode("utf-8")
+            path, _ = os.path.split(name)
+            if path:
+                # get all subfolders, if any, in the torrent
+                self.folders.add(path)
             length = f[b"length"]
             self.files.append(TorrentFile(name, length, ceil(length/self.piece_length), offset))
             offset += length
