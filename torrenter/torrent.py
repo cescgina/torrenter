@@ -16,8 +16,11 @@ class Torrent:
         self.multi_file = None
         self.output_folder = output_folder
         self.announce_list = []
-        for tier in self._data[b"announce-list"]:
-            self.announce_list.extend(tier)
+        if b"announce-list" in self._data:
+            for tier in self._data[b"announce-list"]:
+                self.announce_list.extend(tier)
+        else:
+            self.announce_list = [self._data[b"announce"]]
         self._identify_files()
 
     def __str__(self):
