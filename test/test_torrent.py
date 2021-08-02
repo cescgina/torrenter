@@ -70,6 +70,20 @@ class SXSWTorrentTests(unittest.TestCase):
     """
         Represents a multi_file torrent which is not supported
     """
+    def setUp(self):
+        self.torrent = Torrent("test/data/SXSW_2016_Showcasing_Artists_Part1.torrent")
     def test_instaniate(self):
-        t = Torrent("test/data/SXSW_2016_Showcasing_Artists_Part1.torrent")
-        self.assertTrue(t.multi_file)
+        self.assertTrue(self.torrent.multi_file)
+
+    def test_files_number(self):
+        self.assertEqual(len(self.torrent.files), 1006)
+
+    def test_trackers_list(self):
+        self.assertEqual(len(self.torrent.announce_list), 12)
+
+    def test_announce(self):
+        self.assertEqual(self.torrent.announce,
+                "udp://tracker.openbittorrent.com:80/announce")
+
+    def test_number_pieces(self):
+        self.assertEqual(len(self.torrent.pieces), 3329)

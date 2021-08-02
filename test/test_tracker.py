@@ -1,14 +1,7 @@
 import unittest
 from collections import OrderedDict
 
-from torrenter.tracker import _calculate_peer_id, TrackerResponse
-
-
-class TrackerTests(unittest.TestCase):
-    def test_peer_id(self):
-        peer_id = _calculate_peer_id()
-
-        self.assertTrue(len(peer_id) == 20)
+from torrenter.tracker import TrackerResponse
 
 
 class TrackerResponseTest(unittest.TestCase):

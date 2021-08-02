@@ -6,8 +6,15 @@ from bitstring import BitArray
 
 from . import no_logging
 from torrenter.client import Piece, Block, PieceManager, REQUEST_SIZE
-from torrenter.client import calculates_files_in_piece
+from torrenter.client import calculates_files_in_piece, _calculate_peer_id
 from torrenter.torrent import Torrent, TorrentFile
+
+class IDTests(unittest.TestCase):
+    def test_peer_id(self):
+        peer_id = _calculate_peer_id()
+
+        self.assertTrue(len(peer_id) == 20)
+
 
 
 class PieceTests(unittest.TestCase):
