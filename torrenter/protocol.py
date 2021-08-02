@@ -87,6 +87,7 @@ class PeerConnection:
                 raise e
 
             try:
+                self.active = True
                 logging.debug(f"Attempting to connect to peer: {ip} using port {port}, connection {self.id}")
                 self.ip = ip
                 self.port = port
@@ -96,7 +97,6 @@ class PeerConnection:
 
                 # it's our responsability to initiate the handshake
                 buffer = await self._handshake(id_peer)
-                self.active = True
 
                 logging.debug(f"Peer with ip {self.ip} is {self.remote_id}, connection {self.id}")
                 # Sending bitfield is options and not needed when client does not
@@ -183,7 +183,6 @@ class PeerConnection:
                 logging.exception(f"An error occurred with peer {self.remote_id}, connection {self.id}")
                 raise e
             self.cancel()
-            # self.enqueue()
 
 
     def enqueue(self):
@@ -198,16 +197,15 @@ class PeerConnection:
             Sends the cancel message to the remote peer and closes the
             connection
         """
-        logging.info(f"Closing peer {self.remote_id}")
+        logging.info(f"Closing peer {self.remote_id}, connection {self.id}")
         self.active = False
         if self.remote_id is not None:
             self.piece_manager.remove_peer(self.remote_id)
-        if not self.future.done():
-            logging.debug(f"Cancelling future for peer {self.remote_id}, connection {self.id}")
-            self.future.cancel()
+        # if not self.future.done():
+        #     self.future.cancel()
         if self.writer:
+            logging.debug(f"Closing connection of peer {self.remote_id}, connection {self.id}")
             self.writer.close()
-
         self.queue.task_done()
 
     def restart_peer(self):

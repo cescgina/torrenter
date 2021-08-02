@@ -1,5 +1,6 @@
 import os
 from math import ceil
+from typing import List
 from hashlib import sha1
 from collections import namedtuple
 from torrenter.bencoding import Decoder, Encoder
@@ -54,6 +55,11 @@ class Torrent:
     @property
     def announce(self) -> str:
         return self.announce_list[0].decode("utf-8")
+
+    @property
+    def trackers(self) -> List[str]:
+        for url in self.announce_list:
+            yield url.decode("utf-8")
 
     def demote_tracker(self):
         """

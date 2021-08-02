@@ -244,25 +244,25 @@ class UDPConnection:
 
 
 class Tracker:
-    def __init__(self, torrent):
-        self.id = _calculate_peer_id()
+    def __init__(self, torrent, tracker_url, client_id):
+        self.id = client_id
         self.torrent = torrent
+        self.url = tracker_url
         self.timeout = 60 # consider the tracker dead after a minute
 
     async def fetch_request(self, client, params):
-        url_tracker = self.torrent.announce
-        url = url_tracker + "?" + urlencode(params)
+        url = self.url + "?" + urlencode(params)
         try:
             async with client.get(url, timeout=self.timeout) as response:
                 if not response.status == 200:
-                    raise ConnectionError(f"Unable to connect to tracker {url_tracker}")
+                    raise ConnectionError(f"Unable to connect to tracker {self.url}")
                 data = await response.read()
                 return TrackerResponse(bencoding.Decoder(data).decode())
         except asyncio.TimeoutError:
-            raise ConnectionError(f"Connection to tracker {url_tracker} timed-out")
+            raise ConnectionError(f"Connection to tracker {self.url} timed-out")
 
     async def fetch_request_udp(self, params):
-        return await UDPConnection(self.torrent.announce, params).request()
+        return await UDPConnection(self.url, params).request()
 
     async def connect(self, first: bool=None, uploaded: int=0, downloaded: int=0):
         params = {"info_hash": self.torrent.info_hash, "peer_id": self.id,
@@ -271,7 +271,7 @@ class Tracker:
         	"compact": 1}
         if first:
             params["event"] = "started"
-        if self.torrent.announce.startswith("udp"):
+        if self.url.startswith("udp"):
             # use udp protocol
             return await self.fetch_request_udp(params)
         else:
@@ -292,16 +292,6 @@ class Tracker:
         # a successful tracker response will have non-uncicode data, so it's a safe to bet ignore this exception.
         except UnicodeDecodeError:
             pass
-
-def _calculate_peer_id():
-    """
-    Calculate and return a unique Peer ID.
-    The `peer id` is a 20 byte long identifier. This implementation use the
-    Azureus style `-PC1000-<random-characters>`.
-    Read more:
-        https://wiki.theory.org/BitTorrentSpecification#peer_id
-    """
-    return '-PC0001-' + ''.join([str(random.randint(0, 9)) for _ in range(12)])
 
 def _decode_port(port):
     """
