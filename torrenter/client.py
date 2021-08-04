@@ -695,7 +695,7 @@ def calculates_files_in_piece(files_limits, start, end):
     files = []
     to_remove = []
     for i, (f, offset, length) in enumerate(files_limits):
-        if start == offset and end >= (offset+length):
+        if start <= offset and end >= (offset+length):
             # whole file f fits in this piece
             files.append((f, length))
             start += length
@@ -704,7 +704,11 @@ def calculates_files_in_piece(files_limits, start, end):
             # file started before, but consumes the whole piece
             files.append((f, end-start))
             to_remove.append(i)
-
+        elif start > offset and end >= (offset+length):
+            # file started before, but consumes part of the piece
+            files.append((f, offset+length-start))
+            start += (length-start)
+            to_remove.append(i)
         elif start >= offset and end < (offset+length):
             # file starts here, but goes beyond this piece
             files.append((f, end-start))

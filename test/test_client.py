@@ -146,3 +146,45 @@ class MultiFileContentsTorrentTest(unittest.TestCase):
                 os.remove(fname)
         except OSError as why:
             print(why)
+
+class MultiFileContentsTorrentTest2(unittest.TestCase):
+    def setUp(self):
+        torrent = Torrent("test/data/multi-file-2.torrent")
+        self.piece_manager = PieceManager(torrent)
+
+    def test_torrent_multi_file_pieces(self):
+        piece_length = 1048576
+        golden_first = [(0, 30), (1, 99), (2, piece_length-99-30)]
+        golden = [(2, piece_length)]
+        for piece in self.piece_manager.missing_pieces[:-1]:
+            if piece.index == 0:
+                self.assertEqual(golden_first, piece.files)
+            else:
+                self.assertEqual(golden, piece.files)
+        golden_last = [(2, 891105), (3, 39157), (4, 40737)]
+        self.assertEqual(golden_last, self.piece_manager.missing_pieces[-1].files)
+
+    def test_torrent_multi_file_files(self):
+        golden = [TorrentFile(name='RARBG.txt', length=30, pieces=1, offset=0),
+                  TorrentFile(name='RARBG_DO_NOT_MIRROR.exe', length=99, pieces=1, offset=30),
+                  TorrentFile(name='Rick.and.Morty.S05E07.WEBRip.x264-ION10.mp4', length=224237664, pieces=214, offset=129),
+                  TorrentFile(name='Subs/2_English.srt', length=39157, pieces=1, offset=224237793), 
+                  TorrentFile(name='Subs/3_English.srt', length=40737, pieces=1, offset=224276950)]
+
+        self.assertEqual(golden, self.piece_manager.torrent.files)
+
+    def test_torrent_multi_file_file_descrptors(self):
+        self.assertEqual(5, len(self.piece_manager.fds))
+
+    def tearDown(self):
+        files = ['RARBG.txt',
+                  'RARBG_DO_NOT_MIRROR.exe',
+                  'Rick.and.Morty.S05E07.WEBRip.x264-ION10.mp4',
+                  'Subs/2_English.srt', 
+                  'Subs/3_English.srt']
+        try:
+            for fname in files:
+                os.remove(fname)
+            os.removedirs("Subs")
+        except OSError as why:
+            print(why)
