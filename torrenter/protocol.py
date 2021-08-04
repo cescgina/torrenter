@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import struct
-from asyncio import Queue, TimeoutError
+from asyncio import Queue
 from typing import Optional
 from concurrent.futures import CancelledError
 
@@ -118,7 +118,6 @@ class PeerConnection:
 
                 # Start reading responses as a stream of messages for as long as
                 # the connection is open and data is transmitted
-
                 async for message in PeerStreamIterator(self.reader, self.remote_id, buffer):
                     if "stopped" in self.my_state:
                         break
@@ -141,6 +140,8 @@ class PeerConnection:
                         logging.debug(f"Received Unchoke message from peer {self.remote_id}, connection {self.id}")
                         if "choked" in self.my_state:
                             self.my_state.remove("choked")
+                        if "pending_request" in self.my_state:
+                            self.my_state.remove("pending_request")
                     elif type(message) is Have:
                         logging.debug(f"Received Have message, index {message.index} from peer {self.remote_id}, connection {self.id}")
                         self.piece_manager.update_peer(self.remote_id,
@@ -174,13 +175,18 @@ class PeerConnection:
 
             except ProtocolError:
                 logging.exception(f"ProtocolError with peer {self.remote_id}")
-            except (ConnectionRefusedError, TimeoutError):
-                logging.exception(f"Unable to connect to peer at ip {self.ip}")
-            except (ConnectionResetError, CancelledError) as err:
+            except (TimeoutError, asyncio.TimeoutError):
+                logging.exception(f"Timeout connecting to peer at ip {self.ip}, connection {self.id}")
+            except ConnectionRefusedError:
+                logging.exception(f"Unable to connect to peer at ip {self.ip}, connection {self.id}")
+            except ConnectionResetError as err:
                 logging.warning(f"Connection to {self.remote_id} closed, due to error {err}, connection {self.id}")
+            except CancelledError as err:
+                logging.warning(f"Connection to {self.remote_id} closed, due to cancellation error {err}, connection {self.id}")
             except Exception as e:
+                message_exception = f"An error occurred with peer {self.remote_id}, connection {self.id}"
                 self.cancel()
-                logging.exception(f"An error occurred with peer {self.remote_id}, connection {self.id}")
+                logging.exception(message_exception)
                 raise e
             self.cancel()
 
@@ -389,15 +395,7 @@ class PeerStreamIterator:
                 raise StopAsyncIteration()
             except CancelledError:
                 raise StopAsyncIteration()
-            except TimeoutError:
-                # if self.tries == 5:
-                #     logging.debug(f"Reached 5 tries, close the peer {self.remote_id}")
-                #     raise StopAsyncIteration()
-                # logging.debug(f"Timeout while reading from peer {self.remote_id}, attempt {self.tries}/5")
-                # # sleep for 5 seconds before trying again
-                # await asyncio.sleep(5)
-                # self.tries += 1
-                # timeout when reading, send keepAlive to peer
+            except (asyncio.TimeoutError, TimeoutError):
                 logging.debug("120 seconds without message from peer, send keepalive")
                 return 0
             except StopAsyncIteration as e:
