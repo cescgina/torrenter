@@ -39,7 +39,7 @@ class Torrent:
 
     def _create_subfolders(self):
         for path in self.folders:
-            os.makedirs(os.path.join(self.output_folder, path))
+            os.makedirs(os.path.join(self.output_folder, path), exist_ok=True)
 
     def _identify_files(self):
         files = self._data[b"info"]
