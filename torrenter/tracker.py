@@ -248,7 +248,7 @@ class Tracker:
         self.id = client_id
         self.torrent = torrent
         self.url = tracker_url
-        self.timeout = 60 # consider the tracker dead after a minute
+        self.timeout = 15
 
     async def fetch_request(self, client, params):
         url = self.url + "?" + urlencode(params)
@@ -258,8 +258,8 @@ class Tracker:
                     raise ConnectionError(f"Unable to connect to tracker {self.url}")
                 data = await response.read()
                 return TrackerResponse(bencoding.Decoder(data).decode())
-        except asyncio.TimeoutError:
-            raise ConnectionError(f"Connection to tracker {self.url} timed-out")
+        except asyncio.TimeoutError as exc:
+            raise ConnectionError(f"Connection to tracker {self.url} timed-out") from exc
 
     async def fetch_request_udp(self, params):
         return await UDPConnection(self.url, params).request()
