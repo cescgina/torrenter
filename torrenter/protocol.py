@@ -64,6 +64,10 @@ class PeerConnection:
         self.active = False
         self.future = asyncio.ensure_future(self.wrap_worker())  # Start this worker
 
+    @property
+    def connection_inactive(self):
+        return not self.active or not self.writer
+
     def are_interested(self):
         return "choked" not in self.my_state and "pending_request" not in self.my_state and "interested" in self.my_state
 
@@ -212,6 +216,10 @@ class PeerConnection:
         if self.writer:
             logging.debug(f"Closing connection of peer {self.remote_id}, connection {self.id}")
             self.writer.close()
+            self.writer = None
+        self.ip = None
+        self.port = None
+        self.remote_id = None
         self.queue.task_done()
 
     def restart_peer(self):
@@ -245,7 +253,7 @@ class PeerConnection:
         await self.writer.drain()
 
     async def send_have(self, index: int):
-        if not self.active:
+        if self.connection_inactive:
             return
         message = Have(index)
         logging.debug(f"Send Have message for piece {index} to peer {self.remote_id}, connection {self.id}")
@@ -253,7 +261,7 @@ class PeerConnection:
         await self.writer.drain()
 
     async def send_cancel(self, index: int, begin: int, length: int):
-        if not self.active:
+        if self.connection_inactive:
             return
         message = Cancel(index, begin, length)
         logging.debug(f"Send Cancel message for piece {index}, block {begin} to peer {self.remote_id}, connection {self.id}")
