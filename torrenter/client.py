@@ -16,7 +16,7 @@ from torrenter.protocol import PeerConnection, REQUEST_SIZE
 from torrenter.tracker import Tracker
 
 # The number of max peer connections per TorrentClient
-MAX_PEER_CONNECTIONS = 40
+MAX_PEER_CONNECTIONS = 30
 
 def _calculate_peer_id():
     """
@@ -56,8 +56,8 @@ class TorrentClient:
             self._on_request_send)
             for i in range(MAX_PEER_CONNECTIONS)]
 
-        tracker_futures = [asyncio.ensure_future(self.tracker_connection(tracker)) for tracker in self.trackers]
-        await asyncio.wait(tracker_futures)
+        self.tracker_futures = [asyncio.ensure_future(self.tracker_connection(tracker)) for tracker in self.trackers]
+        await asyncio.wait(self.tracker_futures)
         self.stop()
 
     async def tracker_connection(self, tracker):
@@ -80,7 +80,7 @@ class TorrentClient:
                             downloaded=self.piece_manager.bytes_downloaded)
                 except ConnectionError as e:
                     logging.exception(f"{e}")
-                    await asyncio.sleep(3*60)
+                    await asyncio.sleep(interval)
                     continue
                 if response:
                     logging.debug(f"Got response from tracker {tracker.url}, with {len(response.peers)} peers and interval of {response.interval}")
@@ -95,11 +95,13 @@ class TorrentClient:
 
                     for peer in response.peers:
                         self.available_peers.put_nowait(peer)
+                    logging.debug(f"Got {self.available_peers.qsize()} peers now")
                 else:
                     logging.warning(f"Got a failure from tracker {tracker.url}, reason {response.failure}")
             else:
-                logging.debug(f"Have to wait {(previous+interval)-current} seconds for next ping to tracker {tracker.url}")
-                await asyncio.sleep(5)
+                wait_time = previous+interval-current
+                logging.debug(f"Have to wait {wait_time} seconds for next ping to tracker {tracker.url}")
+                await asyncio.sleep(wait_time)
 
     def _empty_queue(self):
         while not self.available_peers.empty():
@@ -112,6 +114,8 @@ class TorrentClient:
         self.abort = True
         for peer in self.peers:
             peer.stop()
+        for tracker in self.tracker_futures:
+            tracker.cancel()
         self.piece_manager.close()
 
     def _on_request_send(self):
