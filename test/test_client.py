@@ -129,18 +129,18 @@ class MultiFileContentsTorrentTest(unittest.TestCase):
         self.assertEqual(golden_last, self.piece_manager.missing_pieces[-1].files)
 
     def test_torrent_multi_file_files(self):
-        golden = [TorrentFile('Download more at www.ettvcentral.com .txt', 41, 1, 0),
-                  TorrentFile('Rick.and.Morty.S05E06.XviD-AFG.nfo', 1108, 1, 41),
-                  TorrentFile('Rick.and.Morty.S05E06.XviD-AFG[ettv].avi', 380672528, 46, 1149)]
+        golden = [TorrentFile('multi-file-1.txt', 41, 1, 0),
+                  TorrentFile('multi-file-2.txt', 1108, 1, 41),
+                  TorrentFile('multi-file-3.txt', 380672528, 46, 1149)]
         self.assertEqual(golden, self.piece_manager.torrent.files)
 
     def test_torrent_multi_file_file_descrptors(self):
         self.assertEqual(3, len(self.piece_manager.fds))
 
     def tearDown(self):
-        files = ['Download more at www.ettvcentral.com .txt', 
-                 'Rick.and.Morty.S05E06.XviD-AFG.nfo',
-                 'Rick.and.Morty.S05E06.XviD-AFG[ettv].avi']
+        files = ['multi-file-1.txt', 
+                 'multi-file-2.txt',
+                 'multi-file-3.txt']
         try:
             for fname in files:
                 os.remove(fname)
@@ -165,11 +165,11 @@ class MultiFileContentsTorrentTest2(unittest.TestCase):
         self.assertEqual(golden_last, self.piece_manager.missing_pieces[-1].files)
 
     def test_torrent_multi_file_files(self):
-        golden = [TorrentFile(name='RARBG.txt', length=30, pieces=1, offset=0),
-                  TorrentFile(name='RARBG_DO_NOT_MIRROR.exe', length=99, pieces=1, offset=30),
-                  TorrentFile(name='Rick.and.Morty.S05E07.WEBRip.x264-ION10.mp4', length=224237664, pieces=214, offset=129),
-                  TorrentFile(name='Subs/2_English.srt', length=39157, pieces=1, offset=224237793), 
-                  TorrentFile(name='Subs/3_English.srt', length=40737, pieces=1, offset=224276950)]
+        golden = [TorrentFile(name='multi-file-1.txt', length=30, pieces=1, offset=0),
+                  TorrentFile(name='multi-file-2.txt', length=99, pieces=1, offset=30),
+                  TorrentFile(name='multi-file-3.txt', length=224237664, pieces=214, offset=129),
+                  TorrentFile(name='Subs/multi-file-4.txt', length=39157, pieces=1, offset=224237793), 
+                  TorrentFile(name='Subs/multi-file-5.txt', length=40737, pieces=1, offset=224276950)]
 
         self.assertEqual(golden, self.piece_manager.torrent.files)
 
@@ -177,11 +177,11 @@ class MultiFileContentsTorrentTest2(unittest.TestCase):
         self.assertEqual(5, len(self.piece_manager.fds))
 
     def tearDown(self):
-        files = ['RARBG.txt',
-                  'RARBG_DO_NOT_MIRROR.exe',
-                  'Rick.and.Morty.S05E07.WEBRip.x264-ION10.mp4',
-                  'Subs/2_English.srt', 
-                  'Subs/3_English.srt']
+        files = ['multi-file-1.txt',
+                 'multi-file-2.txt',
+                 'multi-file-3.txt',
+                 'Subs/multi-file-4.txt', 
+                 'Subs/multi-file-5.txt']
         try:
             for fname in files:
                 os.remove(fname)
